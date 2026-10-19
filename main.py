@@ -3,7 +3,6 @@
 import argparse
 import queue
 import sys
-import platform
 from collections import deque
 import urllib.error
 import urllib.request
@@ -12,7 +11,7 @@ import os
 from pathlib import Path
 
 import numpy as np
-import pvporcupine
+from openwakeword.model import Model as WakeWordModel
 import sounddevice as sd
 from dotenv import load_dotenv
 from faster_whisper import WhisperModel
@@ -29,7 +28,8 @@ MAX_HISTORY_MESSAGES = 12
 def record_audio(device: int | None, engine, threshold: float) -> np.ndarray:
     """Espera pela palavra-chave e grava até silêncio, sem usar Enter."""
     frames: queue.Queue[bytes] = queue.Queue(maxsize=128)
-    frame_seconds = engine.frame_length / engine.sample_rate
+    frame_length = 1280  # 80 ms de áudio mono a 16 kHz
+    frame_seconds = frame_length / SAMPLE_RATE
     preroll = deque(maxlen=max(1, round(0.4 / frame_seconds)))
     silence_limit = max(1, round(1.1 / frame_seconds))
     speech_timeout = max(1, round(3.5 / frame_seconds))
@@ -45,14 +45,16 @@ def record_audio(device: int | None, engine, threshold: float) -> np.ndarray:
 
     print("Aguardando 'Aléxios'... (Ctrl+C para sair)")
     with sd.RawInputStream(
-        samplerate=engine.sample_rate, blocksize=engine.frame_length,
+        samplerate=SAMPLE_RATE, blocksize=frame_length,
         device=device, channels=1, dtype="int16", callback=callback,
     ):
         # O fluxo fica aberto durante a escuta; fecha antes da chamada à API.
         while True:
             raw = frames.get()
             pcm = np.frombuffer(raw, dtype=np.int16)
-            if engine.process(pcm) >= 0:
+            scores = engine.predict(pcm)
+            if any(score >= 0.5 for score in scores.values()):
+                engine.reset()
                 print("Aléxios detectado. Ouvindo comando...")
                 captured = list(preroll) + [raw]
                 heard_speech = False
@@ -84,24 +86,17 @@ def record_audio(device: int | None, engine, threshold: float) -> np.ndarray:
     return np.frombuffer(b"".join(captured), dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def create_wake_engine(root: Path, access_key: str):
-    """Carrega o detector específico da plataforma atual."""
-    system = platform.system().lower()
-    if system not in {"windows", "linux"}:
-        raise RuntimeError(f"Sistema não suportado: {system}")
-    keyword = root / "models" / f"alexios_{system}.ppn"
-    language = root / "models" / "porcupine_params_pt.pv"
-    missing = [str(path) for path in (keyword, language) if not path.is_file()]
-    if missing:
+def create_wake_engine(root: Path) -> WakeWordModel:
+    """Carrega um modelo ONNX personalizado de 'Aléxios', sem conta/API."""
+    keyword = root / "models" / "alexios.onnx"
+    if not keyword.is_file():
         raise RuntimeError(
-            "Arquivos Picovoice ausentes: " + ", ".join(missing)
-            + ". Consulte o README para gerar os modelos."
+            f"Modelo de ativação ausente: {keyword}. "
+            "É necessário treinar/obter um modelo openWakeWord personalizado "
+            "para 'Aléxios' em formato .onnx (consulte README)."
         )
-    return pvporcupine.create(
-        access_key=access_key,
-        keyword_paths=[str(keyword)],
-        model_path=str(language),
-        sensitivities=[0.65],
+    return WakeWordModel(
+        wakeword_models=[str(keyword)], inference_framework="onnx"
     )
 
 
@@ -171,13 +166,8 @@ def main() -> None:
         print("OPENROUTER_API_KEY não encontrada. Crie o arquivo .env na raiz.", file=sys.stderr)
         raise SystemExit(1)
 
-    picovoice_key = os.getenv("PICOVOICE_ACCESS_KEY", "").strip()
-    if not picovoice_key:
-        print("PICOVOICE_ACCESS_KEY não encontrada no .env.", file=sys.stderr)
-        raise SystemExit(1)
-
     try:
-        engine = create_wake_engine(Path(__file__).resolve().parent, picovoice_key)
+        engine = create_wake_engine(Path(__file__).resolve().parent)
     except Exception as exc:
         print(f"Falha ao inicializar detector de voz: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -185,7 +175,7 @@ def main() -> None:
     try:
         info = sd.query_devices(args.device, "input")
         sd.check_input_settings(
-            device=args.device, samplerate=engine.sample_rate, channels=1, dtype="int16"
+            device=args.device, samplerate=SAMPLE_RATE, channels=1, dtype="int16"
         )
         print(f"Microfone: {info['name']}")
         print(f"Carregando modelo Whisper '{args.model}' na CPU...")
@@ -221,8 +211,6 @@ def main() -> None:
         raise SystemExit(1) from exc
     except KeyboardInterrupt:
         print("\nEncerrando.")
-    finally:
-        engine.delete()
 
 
 if __name__ == "__main__":

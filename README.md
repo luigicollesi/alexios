@@ -24,23 +24,24 @@ Crie um arquivo `.env` na raiz do projeto, copiando o exemplo `.env.example`:
 
 ```env
 OPENROUTER_API_KEY=sk-or-v1-sua-chave-aqui
-PICOVOICE_ACCESS_KEY=sua-access-key-picovoice
 ```
 
 Nunca envie a chave ao GitHub: `.env` está incluído no `.gitignore`.
 
-## Modelos da palavra de ativação
+## Modelo de ativação "Aléxios" (openWakeWord)
 
-Acesse a [Picovoice Console](https://console.picovoice.ai/), obtenha uma **AccessKey** e crie a palavra personalizada **Aléxios**, idioma português. Baixe um arquivo `.ppn` para **Windows** e outro para **Linux**, e o modelo de idioma português `.pv` do Porcupine. Posicione-os exatamente assim (não são fornecidos no repositório):
+O projeto agora usa [openWakeWord](https://github.com/dscripka/openWakeWord), **sem AccessKey**. Seu modelo ONNX pode ser utilizado tanto no Windows quanto no Linux.
+
+**Importante:** a biblioteca não fornece um modelo pré-treinado para o nome "Aléxios". Você precisa **treinar ou obter** um classificador compatível e colocá-lo em:
 
 ```text
 models/
-  alexios_windows.ppn
-  alexios_linux.ppn
-  porcupine_params_pt.pv
+  alexios.onnx
 ```
 
-O modelo de idioma português está disponível nos [recursos oficiais do Porcupine](https://github.com/Picovoice/porcupine/tree/master/lib/common). A palavra personalizada precisa de arquivos específicos para cada sistema. Guarde a AccessKey apenas no `.env`. O microfone não envia áudio ao OpenRouter, somente transcrições.
+Consulte as instruções de [treinamento de modelos personalizados](https://github.com/dscripka/openWakeWord#training-new-models). Não basta renomear um modelo de outra palavra: o arquivo deve ter sido treinado para reconhecer "Aléxios". Sem esse arquivo, o programa mostra um erro claro e encerra, em vez de disparar por palavras incorretas.
+
+O detector recebe áudio PCM 16-bit/16 kHz em blocos de 80 ms, calcula a probabilidade de ativação e dispara quando a pontuação for pelo menos 0,5. O reconhecimento local funciona offline depois da instalação dos modelos.
 
 ## Execução
 

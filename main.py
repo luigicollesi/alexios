@@ -3,6 +3,8 @@
 import argparse
 import queue
 import sys
+import platform
+from collections import deque
 import urllib.error
 import urllib.request
 import json
@@ -10,6 +12,7 @@ import os
 from pathlib import Path
 
 import numpy as np
+import pvporcupine
 import sounddevice as sd
 from dotenv import load_dotenv
 from faster_whisper import WhisperModel
@@ -23,43 +26,83 @@ OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 MAX_HISTORY_MESSAGES = 12
 
 
-def record_audio(device: int | None, max_seconds: int = 60) -> np.ndarray:
-    """Grava áudio mono enquanto o usuário não pressiona Enter."""
-    chunks: queue.Queue[np.ndarray] = queue.Queue()
-    errors: list[str] = []
+def record_audio(device: int | None, engine, threshold: float) -> np.ndarray:
+    """Espera pela palavra-chave e grava até silêncio, sem usar Enter."""
+    frames: queue.Queue[bytes] = queue.Queue(maxsize=128)
+    frame_seconds = engine.frame_length / engine.sample_rate
+    preroll = deque(maxlen=max(1, round(0.4 / frame_seconds)))
+    silence_limit = max(1, round(1.1 / frame_seconds))
+    speech_timeout = max(1, round(3.5 / frame_seconds))
+    max_frames = round(20 / frame_seconds)
 
-    def callback(indata, frames, time_info, status):
+    def callback(indata, count, time_info, status):
         if status:
-            errors.append(str(status))
-        chunks.put(indata.copy())
+            print(f"Aviso do microfone: {status}", file=sys.stderr)
+        try:
+            frames.put_nowait(bytes(indata))
+        except queue.Full:
+            pass
 
-    input("Pressione Enter para INICIAR a gravação...")
-    print("Gravando. Fale agora e pressione Enter para PARAR.")
-
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-        device=device,
-        callback=callback,
+    print("Aguardando 'Aléxios'... (Ctrl+C para sair)")
+    with sd.RawInputStream(
+        samplerate=engine.sample_rate, blocksize=engine.frame_length,
+        device=device, channels=1, dtype="int16", callback=callback,
     ):
-        input()
+        # O fluxo fica aberto durante a escuta; fecha antes da chamada à API.
+        while True:
+            raw = frames.get()
+            pcm = np.frombuffer(raw, dtype=np.int16)
+            if engine.process(pcm) >= 0:
+                print("Aléxios detectado. Ouvindo comando...")
+                captured = list(preroll) + [raw]
+                heard_speech = False
+                silence = 0
+                wait_frames = 0
+                break
+            preroll.append(raw)
 
-    if errors:
-        print(f"Aviso do microfone: {errors[-1]}", file=sys.stderr)
+        while len(captured) < max_frames:
+            raw = frames.get()
+            captured.append(raw)
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(samples * samples)))
+            if rms >= threshold:
+                heard_speech = True
+                silence = 0
+            elif heard_speech:
+                silence += 1
+                if silence >= silence_limit:
+                    break
+            else:
+                wait_frames += 1
+                if wait_frames >= speech_timeout:
+                    break
 
-    recorded = []
-    while not chunks.empty():
-        recorded.append(chunks.get_nowait())
-
-    if not recorded:
+    if not heard_speech:
+        print("Comando não detectado após ativação.")
         return np.empty(0, dtype=np.float32)
+    return np.frombuffer(b"".join(captured), dtype=np.int16).astype(np.float32) / 32768.0
 
-    audio = np.concatenate(recorded, axis=0).reshape(-1)
-    if audio.size > max_seconds * SAMPLE_RATE:
-        print(f"Áudio limitado aos primeiros {max_seconds} segundos.")
-        audio = audio[: max_seconds * SAMPLE_RATE]
-    return audio
+
+def create_wake_engine(root: Path, access_key: str):
+    """Carrega o detector específico da plataforma atual."""
+    system = platform.system().lower()
+    if system not in {"windows", "linux"}:
+        raise RuntimeError(f"Sistema não suportado: {system}")
+    keyword = root / "models" / f"alexios_{system}.ppn"
+    language = root / "models" / "porcupine_params_pt.pv"
+    missing = [str(path) for path in (keyword, language) if not path.is_file()]
+    if missing:
+        raise RuntimeError(
+            "Arquivos Picovoice ausentes: " + ", ".join(missing)
+            + ". Consulte o README para gerar os modelos."
+        )
+    return pvporcupine.create(
+        access_key=access_key,
+        keyword_paths=[str(keyword)],
+        model_path=str(language),
+        sensitivities=[0.65],
+    )
 
 
 def transcribe_audio(model: WhisperModel, audio: np.ndarray) -> str:
@@ -115,6 +158,7 @@ def main() -> None:
     parser.add_argument("--list-devices", action="store_true", help="Lista microfones disponíveis")
     parser.add_argument("--device", type=int, default=None, help="ID do microfone")
     parser.add_argument("--model", default="base", help="Modelo Whisper (tiny, base, small)")
+    parser.add_argument("--threshold", type=float, default=0.018, help="Limiar RMS de detecção de fala")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -127,10 +171,21 @@ def main() -> None:
         print("OPENROUTER_API_KEY não encontrada. Crie o arquivo .env na raiz.", file=sys.stderr)
         raise SystemExit(1)
 
+    picovoice_key = os.getenv("PICOVOICE_ACCESS_KEY", "").strip()
+    if not picovoice_key:
+        print("PICOVOICE_ACCESS_KEY não encontrada no .env.", file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        engine = create_wake_engine(Path(__file__).resolve().parent, picovoice_key)
+    except Exception as exc:
+        print(f"Falha ao inicializar detector de voz: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
     try:
         info = sd.query_devices(args.device, "input")
         sd.check_input_settings(
-            device=args.device, samplerate=SAMPLE_RATE, channels=1, dtype="float32"
+            device=args.device, samplerate=engine.sample_rate, channels=1, dtype="int16"
         )
         print(f"Microfone: {info['name']}")
         print(f"Carregando modelo Whisper '{args.model}' na CPU...")
@@ -138,8 +193,8 @@ def main() -> None:
         history: list[dict[str, str]] = []
 
         while True:
-            audio = record_audio(args.device)
-            if audio.size == 0 or np.max(np.abs(audio)) < 0.001:
+            audio = record_audio(args.device, engine, args.threshold)
+            if audio.size == 0:
                 print("Nenhuma fala detectada. Tente novamente.")
             else:
                 print("Transcrevendo...")
@@ -160,10 +215,6 @@ def main() -> None:
                             *candidate, {"role": "assistant", "content": answer}
                         ][-MAX_HISTORY_MESSAGES:]
 
-            if input("Nova gravação? [Enter = sim / n = sair]: ").strip().lower() in {
-                "n", "não", "nao"
-            }:
-                break
     except (sd.PortAudioError, ValueError) as exc:
         print(f"Erro ao acessar o microfone: {exc}", file=sys.stderr)
         print("Use 'python main.py --list-devices' para selecionar outro dispositivo.")

@@ -221,6 +221,8 @@ def main() -> None:
         raise SystemExit(1) from exc
     except KeyboardInterrupt:
         print("\nEncerrando.")
+    finally:
+        engine.delete()
 
 
 if __name__ == "__main__":

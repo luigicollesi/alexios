@@ -1,56 +1,61 @@
 # Alexios
 
-Assistente de voz em Python. **Etapa 1:** reconhecer a fala pelo microfone e transcrevê-la localmente em português, sem chave de API.
+Assistente de voz em Python: capta áudio pelo microfone, transcreve localmente com Faster-Whisper e envia **somente o texto transcrito** ao NVIDIA Nemotron 3 Ultra (free), via OpenRouter. A resposta textual aparece no terminal.
 
 ## Requisitos
-- Python 3.10 ou superior
-- Microfone configurado
-- Internet apenas no primeiro download do modelo Whisper
-- No Linux, pode ser necessário instalar a biblioteca PortAudio do sistema
 
-## Instalação
+- Windows 64 bits e Python **3.12** (Python 3.15 não é compatível com a dependência CTranslate2 utilizada nesta versão).
+- Microfone e acesso à internet para a API OpenRouter.
+- Chave de API criada em https://openrouter.ai/settings/keys
 
-```bash
+## Instalação (CMD do Windows)
+
+```cmd
 git clone https://github.com/luigicollesi/alexios.git
 cd alexios
-python -m venv .venv
+py -3.12 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -r requirements.txt
 ```
 
-Ative o ambiente virtual:
+Se já clonou o repositório, use `git pull origin main` em vez de `git clone`.
 
-- Windows (PowerShell): `.venv\Scripts\Activate.ps1`
-- Linux/macOS: `source .venv/bin/activate`
+Crie um arquivo `.env` na raiz do projeto, copiando o exemplo `.env.example`:
 
-```bash
-python -m pip install -r requirements.txt
+```env
+OPENROUTER_API_KEY=sk-or-v1-sua-chave-aqui
+```
+
+Nunca envie a chave ao GitHub: `.env` está incluído no `.gitignore`.
+
+## Execução
+
+```cmd
 python main.py
 ```
 
-Pressione **Enter** para começar a gravação, fale e pressione **Enter** novamente para transcrever. Repita ou digite `n` para sair.
+Pressione Enter para começar a gravação, fale e pressione Enter novamente para parar. A transcrição será enviada ao modelo e a resposta será impressa no terminal. Pressione Enter para gravar outra pergunta ou digite `n` para sair.
 
-## Selecionar microfone
+Para listar ou escolher microfones:
 
-```bash
+```cmd
 python main.py --list-devices
 python main.py --device 2
 ```
 
-O dispositivo precisa suportar captura mono a 16 kHz. Se não suportar, selecione outro dispositivo.
+Para trocar o modelo de transcrição local:
 
-## Modelo de transcrição
-
-Por padrão é usado `base` em CPU/int8. Para dispositivos mais lentos:
-
-```bash
+```cmd
 python main.py --model tiny
 ```
 
-Para maior qualidade de transcrição (com maior consumo de CPU):
+## Organização
 
-```bash
-python main.py --model small
-```
+- `main.py`: todo o fluxo (microfone, transcrição, solicitação HTTP e histórico temporário).
+- `context.py`: contexto base do assistente enviado como mensagem `system`.
+- `.env`: chave privada da API; não versionado.
+- `.env.example`: modelo sem credenciais reais.
 
-## Escopo
+O histórico das últimas seis interações é mantido apenas na memória do processo para contextualizar perguntas subsequentes. Não há banco de dados nem síntese de voz nesta etapa. Erros de API não são adicionados ao histórico.
 
-Nesta etapa não há envio de áudio à IA, síntese de voz ou persistência em banco de dados. Próximas etapas: detecção automática de início/fim de fala, integração à API de IA, TTS e armazenamento assíncrono de perguntas e respostas.
+O endpoint gratuito pode ter limites de requisições e políticas de tratamento de dados. Evite enviar informações pessoais ou confidenciais pela versão gratuita.

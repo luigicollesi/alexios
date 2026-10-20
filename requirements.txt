@@ -2,5 +2,3 @@ faster-whisper>=1.1,<2
 numpy>=1.26,<3
 sounddevice>=0.5,<1
 python-dotenv>=1,<2
-openwakeword>=0.6,<1
-onnxruntime>=1.18,<2

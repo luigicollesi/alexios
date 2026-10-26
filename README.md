@@ -1,5 +1,13 @@
 # Alexios
 
+## Modo ambiente: escuta contínua integrada ao painel
+
+A branch `feature/ambient-listening` adiciona `continuous.py`, sem alterar o fluxo interativo de `main.py`. A arquitetura completa, os comandos de instalação e as limitações constam em [AMBIENT.md](AMBIENT.md).
+
+Execução: configure `ALEXIOS_BRIDGE_URL` e `ALEXIOS_AGENT_TOKEN` no arquivo `.env` e execute `python continuous.py --model base` com o Agent Hub da branch `feature/ambient-listening-bridge` do repositório `alexios-web` em execução.
+
+
+
 Assistente de voz em Python: capta áudio pelo microfone, transcreve localmente com Faster-Whisper e envia **somente o texto transcrito** ao NVIDIA Nemotron 3 Ultra (free), via OpenRouter. A resposta textual aparece no terminal.
 
 ## Requisitos

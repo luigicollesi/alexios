@@ -325,7 +325,7 @@ def main() -> None:
         return
 
     load_dotenv(Path(__file__).resolve().parent / ".env")
-    url = os.getenv("ALEXIOS_BRIDGE_URL", "http://localhost:8787")
+    url = os.getenv("ALEXIOS_BRIDGE_URL", "https://alexios-web.vercel.app")
     token = os.getenv("ALEXIOS_AGENT_TOKEN", "")
     instance_id = os.getenv("ALEXIOS_INSTANCE_ID") or "alexios-" + uuid4().hex[:16]
     client = BridgeClient(url, token, instance_id)

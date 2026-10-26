@@ -1,14 +1,14 @@
 # Alexios
 
-## Modo ambiente: escuta contínua integrada ao painel
+## Modo ambiente sem wake word
 
-A branch `feature/ambient-listening` adiciona `continuous.py`, sem alterar o fluxo interativo de `main.py`. A arquitetura completa, os comandos de instalação e as limitações constam em [AMBIENT.md](AMBIENT.md).
+A branch `feature/ambient-listening` traz `continuous.py` com gravações sobrepostas de 4s a cada 3s, Whisper local e consultas a cada ~8s ao servidor Next.js na Vercel, com contexto armazenado no Neon PostgreSQL. **Não utiliza Cloudflare**. Leia [AMBIENT.md](AMBIENT.md) para configurar as chaves e iniciar o modo contínuo.
 
-Execução: configure `ALEXIOS_BRIDGE_URL=https://alexios-web.vercel.app` e `ALEXIOS_AGENT_TOKEN` no arquivo `.env` e execute `python continuous.py --model base` com o Agent Hub da branch `feature/ambient-listening-bridge` do repositório `alexios-web` em execução.
+```bash
+python continuous.py --model base
+```
 
-
-
-Assistente de voz em Python: capta áudio pelo microfone, transcreve localmente com Faster-Whisper e envia **somente o texto transcrito** ao NVIDIA Nemotron 3 Ultra (free), via OpenRouter. A resposta textual aparece no terminal.
+O modo interativo antigo via `main.py` segue disponível.
 
 ## Requisitos
 

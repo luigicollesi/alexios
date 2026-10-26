@@ -46,7 +46,7 @@ class BridgeClient:
         self.token = token
         self.instance_id = instance_id
 
-    def request(self, method: str, path: str, body: dict | None = None) -> dict:
+    def request(self, method: str, path: str, body: dict | None = None, timeout: int = NETWORK_TIMEOUT) -> dict:
         payload = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(
             self.base + path,
@@ -59,7 +59,7 @@ class BridgeClient:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"Bridge HTTP {exc.code}") from exc
@@ -89,7 +89,7 @@ class BridgeClient:
         """Independent 8-second context cycle on the Vercel API."""
         return self.request("POST", "/v1/agent/analyze", {
             "instanceId": self.instance_id,
-        })
+        }, timeout=110)
 
 
 class LocalSpeaker:

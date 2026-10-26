@@ -85,6 +85,12 @@ class BridgeClient:
             "windowIndex": index, "words": words,
         })
 
+    def analyze(self) -> dict:
+        """Independent 8-second context cycle on the Vercel API."""
+        return self.request("POST", "/v1/agent/analyze", {
+            "instanceId": self.instance_id,
+        })
+
 
 class LocalSpeaker:
     """Interruptible system speech. Skips recording while the local TTS is audible."""
@@ -183,6 +189,8 @@ class AmbientRuntime:
         self.queue: queue.Queue[tuple[str, int, int, np.ndarray]] = queue.Queue(maxsize=8)
         self.lock = threading.Lock()
         self.recording: threading.Thread | None = None
+        self.analysis_thread: threading.Thread | None = None
+        self.generation = 0
         self.state = "stopped"
         threading.Thread(target=self._transcribe_loop, name="alexios-stt", daemon=True).start()
 
@@ -198,12 +206,20 @@ class AmbientRuntime:
             return
         self.report("starting")
         self.started.clear()
+        with self.lock:
+            self.generation += 1
+            generation = self.generation
         self.active.set()
         self.recording = threading.Thread(target=self._record_loop, name="alexios-mic", daemon=True)
         self.recording.start()
         if self.started.wait(timeout=8) and self.active.is_set():
             self.report("running")
-            print("ESCUTA ATIVA: janelas de 4s, deslocamento de 3s.")
+            self.analysis_thread = threading.Thread(
+                target=self._analysis_loop, args=(generation,),
+                name="alexios-context", daemon=True,
+            )
+            self.analysis_thread.start()
+            print("ESCUTA ATIVA: janelas de 4s, deslocamento de 3s; análise a cada 8s.")
         else:
             self.active.clear()
             self.report("stopped")
@@ -213,6 +229,7 @@ class AmbientRuntime:
         self.active.clear()
         self.speaker.stop()
         with self.lock:
+            self.generation += 1
             self.capture_id = ""
         while not self.queue.empty():
             try:
@@ -276,6 +293,25 @@ class AmbientRuntime:
             self.active.clear()
             self.started.set()
             self.report("stopped")
+
+    def _analysis_loop(self, generation: int) -> None:
+        """A timer owned by the local Agent triggers one serverless request every 8s."""
+        next_cycle = time.monotonic() + 8.0
+        while self.active.is_set() and self.generation == generation:
+            while self.active.is_set() and self.generation == generation:
+                remaining = next_cycle - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(remaining, 0.25))
+            if not self.active.is_set() or self.generation != generation:
+                return
+            next_cycle = time.monotonic() + 8.0
+            try:
+                response = self.client.analyze()
+                if response.get("accepted"):
+                    print("Contexto atualizado; postura:", response.get("pose"))
+            except RuntimeError as exc:
+                print(f"Falha no ciclo contextual: {exc}", file=sys.stderr)
 
     def _transcribe_loop(self) -> None:
         while True:

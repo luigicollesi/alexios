@@ -2,6 +2,19 @@
 
 Este modo não possui wake word. O **Alexios Python** capta o microfone continuamente (enquanto ligado), transcreve localmente com Faster-Whisper, envia somente palavras reconhecidas e seus horários ao **Alexios Agent Hub** hospedado em um Cloudflare Durable Object. O Hub consolida a janela e consulta a IA via OpenRouter para escolher um texto opcional, uma postura e um contexto substituto. O **Alexios Web** apresenta a última fala, a expressão e o estado do microfone.
 
+## Conexão HTTPS via Vercel (produção)
+
+O endereço oficial usado pelo Core local é **`https://alexios-web.vercel.app`**. Configure no arquivo `alexios/.env`:
+
+```dotenv
+ALEXIOS_BRIDGE_URL=https://alexios-web.vercel.app
+ALEXIOS_AGENT_TOKEN=mesmo-token-seguro-configurado-na-vercel-e-no-worker
+```
+
+A branch de integração do `alexios-web` adiciona um proxy autenticado para os caminhos `https://alexios-web.vercel.app/v1/agent/poll`, `/v1/agent/state` e `/v1/transcript`. O Agent Python acessa **somente a URL pública da Vercel**. O dashboard mantém as APIs `/api/alexios/status` e `/api/alexios/power`.
+
+O proxy da Vercel **não substitui** o backend persistente: configure `ALEXIOS_API_BASE_URL=https://SEU-WORKER.workers.dev` na Vercel com a URL HTTPS do Agent Hub publicado no Cloudflare. Configure `ALEXIOS_AGENT_TOKEN` e `ALEXIOS_DASHBOARD_TOKEN` como Environment Variables no projeto Vercel; `ALEXIOS_AGENT_TOKEN` precisa ser idêntico ao do Worker e Python. `OPENROUTER_API_KEY` fica exclusivamente no Worker. Publique a branch `feature/ambient-listening-bridge` na Vercel e o Worker na Cloudflare antes de utilizar o endereço de produção. A existência do site atual **não significa** que as novas rotas já estão publicadas.
+
 ## Instalação integrada — desenvolvimento local
 
 1. Baixe/abra `luigicollesi/alexios-web` na branch `feature/ambient-listening-bridge`. Em `worker/`, instale com `npm install`, copie `.dev.vars.example` para `.dev.vars` e configure a **mesma** chave `ALEXIOS_AGENT_TOKEN` usada nos outros componentes; configure também a chave `OPENROUTER_API_KEY`. Inicie `npm run dev` na pasta `worker/` (porta 8787).

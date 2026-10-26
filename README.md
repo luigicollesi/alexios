@@ -4,7 +4,7 @@
 
 A branch `feature/ambient-listening` adiciona `continuous.py`, sem alterar o fluxo interativo de `main.py`. A arquitetura completa, os comandos de instalação e as limitações constam em [AMBIENT.md](AMBIENT.md).
 
-Execução: configure `ALEXIOS_BRIDGE_URL` e `ALEXIOS_AGENT_TOKEN` no arquivo `.env` e execute `python continuous.py --model base` com o Agent Hub da branch `feature/ambient-listening-bridge` do repositório `alexios-web` em execução.
+Execução: configure `ALEXIOS_BRIDGE_URL=https://alexios-web.vercel.app` e `ALEXIOS_AGENT_TOKEN` no arquivo `.env` e execute `python continuous.py --model base` com o Agent Hub da branch `feature/ambient-listening-bridge` do repositório `alexios-web` em execução.
 
 
 

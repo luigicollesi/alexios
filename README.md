@@ -1,6 +1,14 @@
 # Alexios
 
-Assistente de voz em Python: capta áudio pelo microfone, transcreve localmente com Faster-Whisper e envia **somente o texto transcrito** ao NVIDIA Nemotron 3 Ultra (free), via OpenRouter. A resposta textual aparece no terminal.
+## Modo ambiente sem wake word
+
+A branch `feature/ambient-listening` traz `continuous.py` com gravações sobrepostas de 4s a cada 3s, Whisper local e consultas a cada ~8s ao servidor Next.js na Vercel, com contexto armazenado no Neon PostgreSQL. **Não utiliza Cloudflare**. Leia [AMBIENT.md](AMBIENT.md) para configurar as chaves e iniciar o modo contínuo.
+
+```bash
+python continuous.py --model base
+```
+
+O modo interativo antigo via `main.py` segue disponível.
 
 ## Requisitos
 

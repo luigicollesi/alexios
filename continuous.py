@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -74,10 +75,10 @@ class BridgeClient:
         })
         return self.request("GET", "/v1/agent/poll?" + query)
 
-    def report(self, power: str) -> None:
+    def report(self, power: str, timeout: int = NETWORK_TIMEOUT) -> None:
         self.request("POST", "/v1/agent/state", {
             "instanceId": self.instance_id, "power": power,
-        })
+        }, timeout=timeout)
 
     def upload(self, capture_id: str, index: int, words: list[dict]) -> None:
         self.request("POST", "/v1/transcript", {
@@ -194,10 +195,10 @@ class AmbientRuntime:
         self.state = "stopped"
         threading.Thread(target=self._transcribe_loop, name="alexios-stt", daemon=True).start()
 
-    def report(self, power: str) -> None:
+    def report(self, power: str, timeout: int = NETWORK_TIMEOUT) -> None:
         self.state = power
         try:
-            self.client.report(power)
+            self.client.report(power, timeout=timeout)
         except RuntimeError as exc:
             print(f"Estado não confirmado: {exc}", file=sys.stderr)
 
@@ -225,7 +226,7 @@ class AmbientRuntime:
             self.report("stopped")
             print("Não foi possível iniciar o microfone.", file=sys.stderr)
 
-    def stop(self, report: bool = True) -> None:
+    def stop(self, report: bool = True, *, shutting_down: bool = False) -> None:
         self.active.clear()
         self.speaker.stop()
         with self.lock:
@@ -239,10 +240,13 @@ class AmbientRuntime:
         if self.recording and self.recording.is_alive():
             self.recording.join(timeout=2)
         if report:
-            self.report("stopped")
+            self.report("stopped", timeout=5 if shutting_down else NETWORK_TIMEOUT)
         else:
             self.state = "stopped"
-        print("Escuta desligada; long polling permanece ativo.")
+        if shutting_down:
+            print("Escuta desligada; encerrando long polling.")
+        else:
+            print("Escuta desligada; long polling permanece ativo.")
 
     def _record_loop(self) -> None:
         try:
@@ -349,6 +353,11 @@ class AmbientRuntime:
                 print(f"Transcrição não enviada: {exc}", file=sys.stderr)
 
 
+def handle_shutdown_signal(_signum: int, _frame: object) -> None:
+    """Treat SIGTERM like Ctrl+C so kill allows graceful cleanup."""
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Alexios: escuta contínua sem wake word")
     parser.add_argument("--device", type=int, default=None, help="Índice do microfone")
@@ -368,6 +377,7 @@ def main() -> None:
     print(f"Whisper local: {args.model} (CPU/int8)")
     model = WhisperModel(args.model, device="cpu", compute_type="int8")
     runtime = AmbientRuntime(client, model, args.device, LocalSpeaker(not args.no_tts))
+    signal.signal(signal.SIGTERM, handle_shutdown_signal)
 
     command_seq = -1
     speech_seq = -1
@@ -403,9 +413,10 @@ def main() -> None:
                     runtime.speaker.say(text)
             speech_seq = incoming_speech_seq
     except KeyboardInterrupt:
-        print("\nEncerrando Agent.")
+        print("\nEncerrando Agent e long polling.")
     finally:
-        runtime.stop()
+        runtime.stop(shutting_down=True)
+        print("Long polling finalizado.")
 
 
 if __name__ == "__main__":

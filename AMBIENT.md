@@ -1,54 +1,80 @@
-# Alexios — escuta contínua sem wake word
+# Alexios V2 — escuta contínua e IA no Alexios Web
 
-Este modo usa **Vercel + Neon PostgreSQL**, sem Cloudflare e sem servidores adicionais. O microfone e o Whisper rodam na máquina local, mas a sessão, os comandos, o contexto e a análise são tratados pelo servidor Next.js público em **https://alexios-web.vercel.app**.
+A branch `feature/web-v2-client` conecta o Python diretamente à produção de
+**https://alexios-web.vercel.app**. Usa somente Vercel e Neon;
+nenhum servidor adicional, Cloudflare ou wake word.
 
-## Como funciona
+## Arquitetura
 
-```text
-Alexios Python                        Next.js na Vercel                  Neon
-──────────────                        ─────────────────                  ────
-microfone sempre ativo (quando ON)
-janelas [0–4], [3–7], [6–10]...
-Whisper local → timestamps ──────────▶ POST /v1/transcript ────────────▶ palavras pendentes
-                      1s overlap      deduplicação por tempo
-       a cada ~8 segundos ───────────▶ POST /v1/agent/analyze ────────▶ claim atômico
-                                      OpenRouter com mensagens:
-                                        1. identidade Alexios
-                                        2. posturas e postura atual
-                                        3. contexto anterior
-                                        4. nova transcrição
-                                      JSON { speech, pose, context } ──▶ atualiza contexto
-long polling contínuo ◀────────────── GET /v1/agent/poll  ◀──────────── comandos + fala
-TTS local / desligar mic
-painel ↔ /api/alexios/{status,power} ─────────────────────────────────▶ estado
+| Python local | Alexios Web (Vercel + Neon) |
+|---|---|
+| Microfone 16 kHz e Whisper local | Validação de identidade e sessão por instância |
+| Janelas 4s, deslocamento 3s, sobreposição 1s | Deduplicação das janelas |
+| POST /v2/transcript (somente palavras com timestamps) | Vercel Queues -> OpenRouter -> contexto, fala e postura |
+| POST /v2/agent/poll (presença, ligar/desligar) | Painel mostra texto da IA e altera a personagem |
+| POST /v2/agent/state (confirmação de microfone) | Histórico e estado no Neon |
+
+O long polling **não envia nem recebe falas da IA**. Serve apenas para presença
+e controle do microfone. Quando o painel envia FIM, o microfone fecha, mas a
+conexão do agente continua ativa. INICIAR reabre a captura em sequência nova.
+
+## Instalação no Ubuntu (Python 3.12)
+
+```bash
+git switch feature/web-v2-client
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-A cada resposta válida, o `context` substitui o anterior, a `pose` troca a imagem no painel e o `speech` é exibido e falado localmente, se não estiver vazio. Quando desligado, o Core mantém o long polling ativo, mas não capta áudio. As palavras não são enviadas em forma de arquivo de áudio: somente transcrições com timestamps são transmitidas à API.
-
-## Como executar
-
-1. No repositório **alexios-web**, faça o deploy da branch [feature/ambient-listening-bridge](https://github.com/luigicollesi/alexios-web/tree/feature/ambient-listening-bridge) na Vercel. No projeto Vercel configure `DATABASE_URL` do Neon `long-bar-99133807`, `OPENROUTER_API_KEY`, `ALEXIOS_DASHBOARD_TOKEN` e `ALEXIOS_AGENT_TOKEN`. A migração de banco `db/migrations/001_alexios_runtime.sql` já foi aplicada à branch Neon `production` fornecida.
-2. Use Python **3.12**, crie um venv e instale `pip install -r requirements.txt`.
-3. Em `alexios/.env`, configure:
+Edite `.env`:
 
 ```dotenv
 ALEXIOS_BRIDGE_URL=https://alexios-web.vercel.app
-ALEXIOS_AGENT_TOKEN=mesma-chave-secreta-do-alexios-web
+ALEXIOS_AGENT_TOKEN=TOKEN_QUE_JA_EXISTE_NA_VERCEL
+ALEXIOS_INSTANCE_ID=alx_SEU_IDENTIFICADOR_ALEATORIO_FIXO
 ```
 
-4. Inicie `python continuous.py --model base`. Depois abra https://alexios-web.vercel.app, autorize o painel com a chave de dashboard e use **FIM / INICIAR**.
+Gere um identificador **uma única vez** com `printf 'alx_%s\n' "$(openssl rand -hex 24)"`.
+Não compartilhe o ID: ele concede acesso ao painel.
 
-**Microfone:** `python continuous.py --list-devices` para descobrir IDs; `python continuous.py --device 2` para selecionar. Use `--no-tts` se quiser somente texto na plataforma.
+```bash
+python continuous.py --list-devices
+python continuous.py --model base
+python continuous.py --device 10 --model base
+```
 
-No desenvolvimento local, substitua o endereço por `ALEXIOS_BRIDGE_URL=http://localhost:3000`, configure `.env.local` no Next.js e rode `npm install && npm run dev`.
+O parâmetro antigo `--no-tts` ainda é aceito por compatibilidade, mas **não existe
+TTS local** na V2. A chave `OPENROUTER_API_KEY` não é usada por `continuous.py`.
 
-## Limites e segurança
+Após iniciar o Python, abra https://alexios-web.vercel.app, clique
+**AUTORIZAR ACESSO** e informe o mesmo `ALEXIOS_INSTANCE_ID`.
 
-- Não é necessário wake word e não existe ativação por voz. Quando ligado, informe às pessoas no ambiente que há transcrição contínua.
-- O áudio cru permanece no computador. Transcrições e contexto seguem pela Vercel ao Neon e ao OpenRouter, portanto não use conversas sensíveis sem autorização.
-- O TTS usa voz do sistema: SAPI no Windows, `say` no macOS e `espeak-ng`/`espeak` no Linux. A escuta pausa brevemente durante a própria fala para reduzir eco.
-- O Core interrompe a gravação após aproximadamente 35 segundos sem contato com a API. A conexão continua tentando restabelecimento.
-- O long polling aguarda até 20 segundos por requisição, mantendo sua lease por até 45 segundos; não precisa de um servidor permanentemente executando na nuvem.
-- A IA só é chamada quando há novas palavras. As decisões ocorrem em ciclos aproximados de oito segundos, não com latência garantida, devido a rede e limites do modelo.
-- O Neon mantém histórico de decisões, contexto, e estado; a política de retenção desses dados deve ser decidida antes de uso permanente.
-- A plataforma ainda precisa dos quatro PNGs reais nas posturas `idle`, `listening`, `thinking`, `speaking` para substituir o SVG provisório.
+## Comportamentos e diagnósticos
+
+- **Online/escutando:** long polling ativo, microfone aberto, transcrições enviadas.
+- **Online/microfone desligado:** o polling continua ativo e aguarda INICIAR.
+- **Offline:** ao parar o polling, o servidor expira a presença em aproximadamente 45s.
+- **Sem rede por 35s:** o Python suspende a captação e tenta reconectar (até 10s de backoff).
+- **Conflito HTTP 409 no poll:** outro processo possui a mesma instância; o cliente
+  espera a expiração do lease anterior. Não deve criar automaticamente outro ID.
+- **HTTP 401/403:** credencial inválida; execução para com mensagem de erro.
+- **Envio HTTP falhou:** mesma janela (`captureId` e `windowIndex`) é repetida
+  sem criar outra sequência lógica.
+- **FIM:** a fila local é descartada e o polling permanece ativo.
+- **Ctrl+C/SIGTERM:** encerra o microfone, os trabalhadores e o long polling.
+- **Resposta da IA:** aparece **somente no painel web**, não no terminal Python.
+
+Ao testar pela primeira vez, confirme no Neon a existência da instância e
+do processamento de inferências. O status READY da Vercel não prova que o
+OpenRouter ou a fila estão funcionando.
+
+## Cuidados de segurança
+
+O áudio cru permanece no computador; as **transcrições** são encaminhadas para
+Vercel, Neon e OpenRouter. Informe as pessoas próximas sobre a escuta contínua
+e evite capturar conversas sem autorização.
+
+O `main.py` legado continua separado e ainda pode usar OpenRouter localmente
+quando executado manualmente. O modo V2 usa apenas `continuous.py`.

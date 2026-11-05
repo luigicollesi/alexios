@@ -73,6 +73,15 @@ class TurnEngineTests(unittest.TestCase):
         self.assertFalse(any(isinstance(e, FloorOpened) for e in events))
         self.assertLessEqual(max(len(e.audio) for e in partials), SAMPLE_RATE * 5 + len(FRAME))
 
+    def test_stop_flushes_partial_without_opening_floor(self):
+        engine = TurnEngine(StubClassifier(complete=False))
+        self.frames(engine, 20, True)
+        fragment = engine.flush_partial()
+        self.assertIsNotNone(fragment)
+        self.assertFalse(fragment.complete)
+        self.assertGreater(len(fragment.audio), 0)
+        self.assertIsNone(engine.flush_partial())
+
     def test_no_floor_without_prior_speech(self):
         engine = TurnEngine(StubClassifier())
         self.assertEqual(self.frames(engine, 200, False), [])

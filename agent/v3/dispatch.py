@@ -122,7 +122,21 @@ class EventDispatcher:
         sequence = self.sequence
         event_id = str(uuid4())
         if isinstance(event, FloorOpened):
+            # O sinal urgente de início de fala deve estar confirmado antes de
+            # uma abertura ser autorizada. Não descartar a abertura só porque
+            # a confirmação ainda está viajando pela rede.
+            limit = time.monotonic() + 12
+            while time.monotonic() < limit and not self.stop_event.is_set():
+                with self.lock:
+                    obsolete = event.activity_epoch != self.latest_epoch
+                    ack = self.acknowledged_activity >= event.activity_epoch
+                if obsolete or not self.enabled():
+                    return None
+                if ack:
+                    break
+                time.sleep(0.05)
             if not self._valid_floor(event):
+                # Não permite uma avaliação tardia sem confirmação de atividade.
                 return None
             return _Pending("floor_open", sequence, event_id, {
                 "eventId": event_id,

@@ -61,6 +61,7 @@ class TurnEngine:
         floor_silence_ms: int = 1200,
         max_segment_s: int = 45,
         preroll_ms: int = 192,
+        initial_epoch: int = 0,
     ) -> None:
         if not (0 < min_pause_ms < max_pause_ms):
             raise ValueError("Intervalos de pausa inválidos.")
@@ -74,7 +75,7 @@ class TurnEngine:
         self.max_samples = max_segment_s * SAMPLE_RATE
         self.preroll_samples = preroll_ms * SAMPLE_RATE
         self.clock = 0
-        self.activity_epoch = 0
+        self.activity_epoch = initial_epoch
         self.has_spoken = False
         self.floor_sent = False
         self.voiced = False

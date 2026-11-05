@@ -124,9 +124,11 @@ class CamPlusRegistry:
             return "speaker_unknown"
         # Não é seguro identificar misturas de vozes. O modo inicial pressupõe
         # um locutor dominante por turno; sobreposição exigirá diarização extra.
+        # Uma janela curta limita o custo do CAM++ em turnos de até 45s.
+        voice = samples[-8 * SAMPLE_RATE:]
         stream = self.extractor.create_stream()
         stream.accept_waveform(sample_rate=SAMPLE_RATE,
-                               waveform=np.ascontiguousarray(samples))
+                               waveform=np.ascontiguousarray(voice))
         stream.input_finished()
         if not self.extractor.is_ready(stream):
             return "speaker_unknown"

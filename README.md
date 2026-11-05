@@ -1,5 +1,32 @@
 # Alexios
 
+## Agente contínuo V2 (produção)
+
+A branch `feature/web-v2-client` utiliza a API de produção de
+[alexios-web](https://alexios-web.vercel.app). O Python captura e transcreve
+áudio com Whisper; **a IA, o texto das respostas, o histórico e a personagem
+ficam exclusivamente na web**. O long polling serve somente para presença e
+comandos de ligar/desligar o microfone.
+
+```bash
+git switch feature/web-v2-client
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Configure ALEXIOS_AGENT_TOKEN e ALEXIOS_INSTANCE_ID fixo no .env
+python continuous.py --model base
+```
+
+Abra o painel e autorize acesso com seu `ALEXIOS_INSTANCE_ID`. Ao clicar em
+**FIM**, o microfone é desligado e a conexão permanece ativa. **INICIAR**
+restaura a captura. **Ctrl+C** encerra também o long polling.
+O parâmetro `--no-tts` é aceito mas não é mais necessário.
+
+Consulte [AMBIENT.md](AMBIENT.md) para configuração, protocolo V2 e diagnóstico.
+
+---
+
 ## Modo ambiente sem wake word
 
 A branch `feature/ambient-listening` traz `continuous.py` com gravações sobrepostas de 4s a cada 3s, Whisper local e consultas a cada ~8s ao servidor Next.js na Vercel, com contexto armazenado no Neon PostgreSQL. **Não utiliza Cloudflare**. Leia [AMBIENT.md](AMBIENT.md) para configurar as chaves e iniciar o modo contínuo.

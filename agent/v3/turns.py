@@ -122,6 +122,12 @@ class TurnEngine:
         self.last_check = 0
         return turn
 
+    def flush_partial(self) -> CapturedTurn | None:
+        """Finaliza apenas o buffer técnico em FIM, sem autorizar resposta."""
+        if not self.turn_parts:
+            return None
+        return self._finish(complete=False, end_sample=self.clock)
+
     def feed(self, frame: np.ndarray, speech: bool) -> list[LocalEvent]:
         samples = np.asarray(frame, dtype=np.float32).reshape(-1)
         if not len(samples):

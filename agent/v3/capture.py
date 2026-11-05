@@ -101,20 +101,31 @@ class TurnAwareCapture:
             self.classifier,
             initial_epoch=self.dispatcher.activity_epoch,
         )
-        while self.active.is_set() and not self.closed.is_set():
-            if self.dispatcher.failure:
-                raise RuntimeError(self.dispatcher.failure)
-            try:
-                samples = self.frames.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            speech = self.vad.is_speech(samples)
-            events = engine.feed(samples, speech)
-            for event in events:
-                if isinstance(event, SpeechStarted):
-                    self.dispatcher.speech_started(event.activity_epoch)
-                elif isinstance(event, (CapturedTurn, FloorOpened)):
-                    self.dispatcher.enqueue(event)
+        try:
+            while self.active.is_set() and not self.closed.is_set():
+                if self.dispatcher.failure:
+                    raise RuntimeError(self.dispatcher.failure)
+                try:
+                    samples = self.frames.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                speech = self.vad.is_speech(samples)
+                events = engine.feed(samples, speech)
+                for event in events:
+                    if isinstance(event, SpeechStarted):
+                        self.dispatcher.speech_started(event.activity_epoch)
+                    elif isinstance(event, (CapturedTurn, FloorOpened)):
+                        self.dispatcher.enqueue(event)
+        finally:
+            # Em FIM, uma fala parcial não deve desaparecer silenciosamente;
+            # ela é um chunk, nunca um turn_end que autorizaria a fala.
+            if not self.dispatcher.failure:
+                fragment = engine.flush_partial()
+                if fragment is not None:
+                    try:
+                        self.dispatcher.enqueue(fragment)
+                    except RuntimeError as exc:
+                        self.last_error = str(exc)
 
     def _record_loop(self) -> None:
         try:

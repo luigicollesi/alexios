@@ -85,6 +85,23 @@ class DispatchTests(unittest.TestCase):
         finally:
             sender.shutdown()
 
+    def test_empty_transcription_does_not_open_floor(self):
+        client = FakeClient()
+        class EmptyTranscriber:
+            def transcribe(self, audio):
+                return ""
+        sender = EventDispatcher(client, EmptyTranscriber(), FakeSpeakers(),
+                                 next_sequence=1)
+        try:
+            sender.speech_started(1)
+            self.assertTrue(wait_until(lambda: sender.acknowledged_activity >= 1))
+            sender.enqueue(turn(1, 1))
+            sender.enqueue(FloorOpened(activity_epoch=1, silence_ms=1250))
+            self.assertTrue(wait_until(lambda: sender.events.unfinished_tasks == 0))
+            self.assertEqual(client.events, [])
+        finally:
+            sender.shutdown()
+
     def test_new_speech_invalidates_waiting_floor(self):
         client = FakeClient()
         tx = FakeTranscriber()

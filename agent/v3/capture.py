@@ -9,6 +9,7 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -22,17 +23,19 @@ from .turns import CapturedTurn, FloorOpened, SpeechStarted, TurnEngine
 class TurnAwareCapture:
     def __init__(
         self, dispatcher: EventDispatcher, vad: SileroVad,
-        classifier: object, device: int | None,
+        classifier: object, device: int | None, *, debug_audio: bool = False,
     ) -> None:
         self.dispatcher = dispatcher
         self.vad = vad
         self.classifier = classifier
         self.device = device
+        self.debug_audio = debug_audio
         self.active = threading.Event()
         self.ready = threading.Event()
         self.closed = threading.Event()
         self.last_error: str | None = None
-        self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=128)
+        # 16 segundos de folga se Smart Turn/Whisper estiverem sob carga em ARM.
+        self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=512)
         self.thread: threading.Thread | None = None
         self._stream: Any | None = None
 
@@ -100,7 +103,14 @@ class TurnAwareCapture:
         engine = TurnEngine(
             self.classifier,
             initial_epoch=self.dispatcher.activity_epoch,
+            diagnostic=(lambda msg: print(f"[SMART TURN] {msg}", flush=True))
+                       if self.debug_audio else None,
         )
+        last_audio_log = time.monotonic()
+        accumulated_energy = 0.0
+        accumulated_samples = 0
+        peak = 0.0
+        last_detected = False
         try:
             while self.active.is_set() and not self.closed.is_set():
                 if self.dispatcher.failure:
@@ -110,11 +120,55 @@ class TurnAwareCapture:
                 except queue.Empty:
                     continue
                 speech = self.vad.is_speech(samples)
+                if self.debug_audio:
+                    accumulated_energy += float(np.dot(samples, samples))
+                    accumulated_samples += len(samples)
+                    peak = max(peak, float(np.max(np.abs(samples))))
+                    now = time.monotonic()
+                    if now - last_audio_log >= 2:
+                        rms = (accumulated_energy / max(1, accumulated_samples)) ** 0.5
+                        print(
+                            f"[AUDIO] rms={rms:.4f} pico={peak:.4f} "
+                            f"vad={'FALA' if speech else 'silencio'} "
+                            f"fila={self.frames.qsize()}/{self.frames.maxsize}",
+                            flush=True,
+                        )
+                        if peak < 0.003:
+                            print(
+                                "[AUDIO] sinal extremamente baixo: confira --device, "
+                                "microfone e volume de entrada.",
+                                flush=True,
+                            )
+                        last_audio_log = now
+                        accumulated_energy = 0.0
+                        accumulated_samples = 0
+                        peak = 0.0
+                if speech != last_detected:
+                    if self.debug_audio:
+                        print(
+                            f"[SILERO] {'fala detectada' if speech else 'pausa detectada'}",
+                            flush=True,
+                        )
+                    last_detected = speech
                 events = engine.feed(samples, speech)
                 for event in events:
                     if isinstance(event, SpeechStarted):
+                        print(f"[V3] speech_started epoch={event.activity_epoch}", flush=True)
                         self.dispatcher.speech_started(event.activity_epoch)
                     elif isinstance(event, (CapturedTurn, FloorOpened)):
+                        if isinstance(event, CapturedTurn):
+                            print(
+                                f"[V3] {'turn_end' if event.complete else 'turn_chunk'} "
+                                f"duracao={len(event.audio)/16000:.1f}s "
+                                f"epoch={event.activity_epoch} -> Whisper",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"[V3] floor_open candidato "
+                                f"epoch={event.activity_epoch} silencio={event.silence_ms}ms",
+                                flush=True,
+                            )
                         self.dispatcher.enqueue(event)
         finally:
             # Em FIM, uma fala parcial não deve desaparecer silenciosamente;
@@ -145,6 +199,8 @@ class TurnAwareCapture:
         finally:
             self.active.clear()
             self.ready.set()
+            if self.last_error:
+                print(f"[V3] Microfone interrompido: {self.last_error}", file=sys.stderr, flush=True)
 
     def stop(self) -> None:
         self.active.clear()

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Protocol
+import time
 from uuid import uuid4
 
 import numpy as np
@@ -62,12 +64,14 @@ class TurnEngine:
         max_segment_s: int = 45,
         preroll_ms: int = 192,
         initial_epoch: int = 0,
+        diagnostic: Callable[[str], None] | None = None,
     ) -> None:
         if not (0 < min_pause_ms < max_pause_ms):
             raise ValueError("Intervalos de pausa inválidos.")
         if floor_silence_ms < min_pause_ms or recheck_ms <= 0 or max_segment_s < 5:
             raise ValueError("Limites da detecção inválidos.")
         self.classifier = classifier
+        self.diagnostic = diagnostic
         self.min_pause = min_pause_ms * SAMPLE_RATE // 1000
         self.recheck = recheck_ms * SAMPLE_RATE // 1000
         self.max_pause = max_pause_ms * SAMPLE_RATE // 1000
@@ -168,7 +172,15 @@ class TurnEngine:
             if check:
                 self.last_check = self.silence_samples
                 recent = self._audio()[-8 * SAMPLE_RATE:]
+                started = time.monotonic()
                 completed = self.classifier.complete(recent)
+                if self.diagnostic:
+                    elapsed_ms = round((time.monotonic() - started) * 1000)
+                    pause_ms = self.silence_samples * 1000 // SAMPLE_RATE
+                    self.diagnostic(
+                        f"pausa={pause_ms}ms, turno_completo={completed}, "
+                        f"inferencia={elapsed_ms}ms"
+                    )
             if completed or self.silence_samples >= self.max_pause:
                 end_sample = self.clock - self.silence_samples
                 events.append(self._finish(complete=True, end_sample=end_sample))

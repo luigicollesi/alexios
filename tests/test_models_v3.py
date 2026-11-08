@@ -71,6 +71,8 @@ class FakeVadConfig:
 
 class FakeVad:
     def __init__(self, config, *, buffer_size_in_seconds):
+        assert config.silero_vad.max_speech_duration <= buffer_size_in_seconds
+        self.buffer_size = buffer_size_in_seconds
         self.detected = False
 
     def accept_waveform(self, samples):
@@ -137,6 +139,7 @@ class ModelAdapterTests(unittest.TestCase):
         with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(models, "require_model", return_value="fake.onnx"):
             vad = models.SileroVad("fake.onnx")
             self.assertEqual(vad.window_size, 512)
+            self.assertGreaterEqual(vad.detector.buffer_size, 100)
             self.assertFalse(vad.is_speech(np.zeros(512, dtype=np.float32)))
             self.assertTrue(vad.is_speech(np.ones(512, dtype=np.float32)))
             with self.assertRaises(ValueError):

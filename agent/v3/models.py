@@ -31,7 +31,7 @@ class SileroVad:
         config.silero_vad.threshold = threshold
         config.silero_vad.min_silence_duration = 0.15
         config.silero_vad.min_speech_duration = 0.1
-        config.silero_vad.max_speech_duration = 100
+        config.silero_vad.max_speech_duration = 45
         config.sample_rate = SAMPLE_RATE
         self.window_size: int = config.silero_vad.window_size
         self._config = config
@@ -40,8 +40,12 @@ class SileroVad:
 
     def reset(self) -> None:
         # Um detector novo não herda estado recorrente de outro ciclo de captura.
+        # sherpa-onnx mantém internamente a fala até surgir silêncio.
+        # O limite anterior (3s) era incompatível com 100s de fala contínua
+        # e provocava "circular-buffer.cc:Push Overflow!" após ~3 segundos.
+        # 120s usa até ~7,7 MB de amostras float32 e cobre turnos longos.
         self.detector = self._module.VoiceActivityDetector(
-            self._config, buffer_size_in_seconds=3
+            self._config, buffer_size_in_seconds=120
         )
 
     def is_speech(self, samples: np.ndarray) -> bool:

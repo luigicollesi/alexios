@@ -37,6 +37,7 @@ class EventDispatcher:
         next_sequence: int,
         max_pending: int = 8,
         enabled: Callable[[], bool] | None = None,
+        debug_audio: bool = False,
     ) -> None:
         if next_sequence < 1:
             raise ValueError("Sequência inicial inválida.")
@@ -45,6 +46,9 @@ class EventDispatcher:
         self.speakers = speakers
         self.sequence = next_sequence
         self.enabled = enabled or (lambda: True)
+        self.debug_audio = debug_audio
+        # Não abrir piso de fala após transcrição vazia/ruído.
+        self.last_confirmed_turn_epoch = -1
         self.events: queue.Queue[CapturedTurn | FloorOpened] = queue.Queue(maxsize=max_pending)
         self.activity: queue.Queue[int] = queue.Queue(maxsize=16)
         self.stop_event = threading.Event()
@@ -108,6 +112,8 @@ class EventDispatcher:
                         self.client.announce_activity(epoch)
                         with self.lock:
                             self.acknowledged_activity = max(self.acknowledged_activity, epoch)
+                        if self.debug_audio:
+                            print(f"[HTTP V3] activity confirmado epoch={epoch}", flush=True)
                         break
                     except BridgeError as exc:
                         if exc.fatal:
@@ -122,6 +128,12 @@ class EventDispatcher:
         sequence = self.sequence
         event_id = str(uuid4())
         if isinstance(event, FloorOpened):
+            # A V3 só deve avaliar uma resposta após texto de turno concluído.
+            # Isso evita a IA falar sobre ruído, mesmo quando o VAD detecta voz.
+            if self.last_confirmed_turn_epoch != event.activity_epoch:
+                print("[V3] floor_open ignorado: nenhum turn_end transcrito neste turno.",
+                      flush=True)
+                return None
             # O sinal urgente de início de fala deve estar confirmado antes de
             # uma abertura ser autorizada. Não descartar a abertura só porque
             # a confirmação ainda está viajando pela rede.
@@ -147,10 +159,19 @@ class EventDispatcher:
             })
         # Não armazenamos contexto por locutor. O servidor mantém uma única
         # memória por instanceId; apenas a etiqueta speakerId é transmitida.
+        started = time.monotonic()
         text = self.transcriber.transcribe(event.audio)
+        elapsed = time.monotonic() - started
         if not text:
+            print(f"[WHISPER] transcrição vazia ({elapsed:.1f}s); nada enviado.",
+                  flush=True)
             return None
+        print(f"[WHISPER] {len(text)} caracteres em {elapsed:.1f}s.", flush=True)
+        if self.debug_audio:
+            print(f"[WHISPER] texto: {text[:250]}", flush=True)
         speaker_id = self.speakers.identify(event.audio)
+        if self.debug_audio:
+            print(f"[CAM++] locutor={speaker_id}", flush=True)
         kind = "turn_end" if event.complete else "turn_chunk"
         return _Pending(kind, sequence, event_id, {
             "eventId": event_id,
@@ -183,9 +204,17 @@ class EventDispatcher:
                 delay = 1
                 while not self.stop_event.is_set():
                     if isinstance(event, FloorOpened) and not self._valid_floor(event):
+                        if self.debug_audio:
+                            print("[V3] floor_open invalidado por nova fala ou microfone inativo.",
+                                  flush=True)
                         break
                     try:
                         self.client.send_event(prepared.kind, prepared.payload)
+                        if isinstance(event, CapturedTurn) and event.complete:
+                            self.last_confirmed_turn_epoch = event.activity_epoch
+                        print(f"[HTTP V3] {prepared.kind} confirmado "
+                              f"seq={self.sequence} epoch={event.activity_epoch}",
+                              flush=True)
                         self.sequence += 1
                         break
                     except BridgeError as exc:

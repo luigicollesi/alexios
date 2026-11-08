@@ -38,6 +38,10 @@ def main() -> int:
     parser.add_argument("--turn-threshold", type=float, default=0.5)
     parser.add_argument("--speaker-threshold", type=float, default=0.6)
     parser.add_argument("--model-threads", type=int, default=1)
+    parser.add_argument("--debug-audio", action="store_true",
+                        help="Mostra volume, VAD, decisões do Smart Turn e etapas HTTP/ASR")
+    parser.add_argument("--mic-test", type=int, metavar="SEGUNDOS",
+                        help="Testa nível do microfone sem carregar modelos ou conectar à web")
     args = parser.parse_args()
 
     import sounddevice as sd
@@ -45,6 +49,36 @@ def main() -> int:
     if args.list_devices:
         print(sd.query_devices())
         return 0
+
+    if args.mic_test is not None:
+        import numpy as np
+        if not 1 <= args.mic_test <= 30:
+            parser.error("--mic-test aceita de 1 a 30 segundos.")
+        try:
+            info = sd.query_devices(args.device, "input")
+            print(f"[MIC] dispositivo: {info['name']}", flush=True)
+            sd.check_input_settings(
+                device=args.device, samplerate=16_000, channels=1,
+                dtype="float32",
+            )
+            print(f"[MIC] gravando {args.mic_test}s sem enviar áudio à web...", flush=True)
+            recorded = sd.rec(
+                args.mic_test * 16_000, samplerate=16_000, channels=1,
+                dtype="float32", device=args.device, blocking=True,
+            ).reshape(-1)
+            for second in range(args.mic_test):
+                block = recorded[second * 16_000:(second + 1) * 16_000]
+                rms = float(np.sqrt(np.mean(block * block)))
+                peak = float(np.max(np.abs(block)))
+                print(f"[MIC] segundo={second+1} rms={rms:.5f} pico={peak:.5f}",
+                      flush=True)
+            if float(np.max(np.abs(recorded))) < 0.003:
+                print("[MIC] sinal muito baixo! Use --list-devices e informe --device.",
+                      flush=True)
+            return 0
+        except Exception as exc:
+            print(f"[MIC] erro de captura: {exc}", file=sys.stderr)
+            return 2
 
     load_dotenv(Path(__file__).resolve().parent / ".env")
     try:
@@ -54,6 +88,10 @@ def main() -> int:
         sd.check_input_settings(
             device=args.device, samplerate=16_000, channels=1, dtype="float32"
         )
+        mic = sd.query_devices(args.device, "input")
+        print(f"[MIC] entrada selecionada: {mic['name']} "
+              f"({'padrão do sistema' if args.device is None else args.device})",
+              flush=True)
         base = Path(args.model_dir)
         from faster_whisper import WhisperModel
 
@@ -93,8 +131,12 @@ def main() -> int:
         client, transcriber, speakers,
         next_sequence=next_sequence,
         enabled=lambda: capture is not None and capture.running,
+        debug_audio=args.debug_audio,
     )
-    capture = TurnAwareCapture(dispatcher, vad, classifier, args.device)
+    capture = TurnAwareCapture(
+        dispatcher, vad, classifier, args.device, debug_audio=args.debug_audio,
+    )
+    print(f"[V3] conexão aceita; próximo evento={next_sequence}", flush=True)
     signal.signal(signal.SIGTERM, stop_signal)
     try:
         AgentRuntime(

@@ -6,3 +6,6 @@ venv/
 *.wav
 .cache/
 .pytest_cache/
+
+# Pesos ONNX da V3 (baixados localmente, nunca versionados)
+models/v3/

@@ -1,0 +1,164 @@
+"""Adapters are exercised without downloading ONNX files or installing sherpa.
+
+These tests validate package API wiring, not real-world model accuracy.
+"""
+
+import sys
+import types
+import unittest
+from unittest.mock import patch
+
+import numpy as np
+
+from agent.v3 import models
+
+
+class FakeStream:
+    def __init__(self):
+        self.audio = None
+
+    def accept_waveform(self, *, sample_rate, waveform):
+        assert sample_rate == 16000
+        self.audio = waveform
+
+    def input_finished(self):
+        pass
+
+
+class FakeEmbeddingConfig:
+    def __init__(self, **kwargs):
+        self.params = kwargs
+
+    def validate(self):
+        return True
+
+
+class FakeExtractor:
+    def __init__(self, config):
+        self.dim = 2
+
+    def create_stream(self):
+        return FakeStream()
+
+    def is_ready(self, stream):
+        return True
+
+    def compute(self, stream):
+        return [1.0, 0.0] if np.mean(stream.audio) >= 0 else [0.0, 1.0]
+
+
+class FakeManager:
+    def __init__(self, dim):
+        self.people = {}
+
+    def add(self, name, embedding):
+        self.people[name] = np.asarray(embedding)
+        return True
+
+    def search(self, vector, *, threshold):
+        a = np.asarray(vector)
+        for name, b in self.people.items():
+            if float(np.dot(a, b)) >= threshold:
+                return name
+        return ""
+
+
+class FakeVadConfig:
+    def __init__(self):
+        self.silero_vad = types.SimpleNamespace(window_size=512)
+        self.sample_rate = 0
+
+
+class FakeVad:
+    def __init__(self, config, *, buffer_size_in_seconds):
+        assert config.silero_vad.max_speech_duration <= buffer_size_in_seconds
+        self.buffer_size = buffer_size_in_seconds
+        self.detected = False
+
+    def accept_waveform(self, samples):
+        self.detected = np.max(np.abs(samples)) > 0.01
+
+    def is_speech_detected(self):
+        return self.detected
+
+    def empty(self):
+        return True
+
+    def pop(self):
+        pass
+
+
+class FakeOptions:
+    def __init__(self):
+        self.inter_op_num_threads = None
+        self.intra_op_num_threads = None
+        self.graph_optimization_level = None
+
+
+class FakeSession:
+    def __init__(self, path, *, sess_options, providers):
+        self.path = path
+
+    def get_inputs(self):
+        return [types.SimpleNamespace(name="input_features")]
+
+    def run(self, outputs, inputs):
+        assert "input_features" in inputs
+        return [np.array([[0.75]], dtype=np.float32)]
+
+
+class FakeFeatureExtractor:
+    def __init__(self, *, chunk_length):
+        assert chunk_length == 8
+
+    def __call__(self, samples, **kwargs):
+        return types.SimpleNamespace(
+            input_features=np.zeros((1, 80, 800), dtype=np.float32)
+        )
+
+
+class ModelAdapterTests(unittest.TestCase):
+    def test_speaker_registration_uses_one_shared_registry(self):
+        sherpa = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,
+            SpeakerEmbeddingExtractor=FakeExtractor,
+            SpeakerEmbeddingManager=FakeManager,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(models, "require_model", return_value="fake.onnx"):
+            speakers = models.CamPlusRegistry("fake.onnx")
+            self.assertEqual(speakers.identify(np.full(16000, 0.1, dtype=np.float32)), "speaker_01")
+            self.assertEqual(speakers.identify(np.full(16000, 0.2, dtype=np.float32)), "speaker_01")
+            self.assertEqual(speakers.identify(np.full(16000, -0.1, dtype=np.float32)), "speaker_02")
+            self.assertEqual(speakers.identify(np.full(3000, 0.1, dtype=np.float32)), "speaker_unknown")
+
+    def test_vad_uses_512_samples_and_reports_voice(self):
+        sherpa = types.SimpleNamespace(
+            VadModelConfig=FakeVadConfig,
+            VoiceActivityDetector=FakeVad,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(models, "require_model", return_value="fake.onnx"):
+            vad = models.SileroVad("fake.onnx")
+            self.assertEqual(vad.window_size, 512)
+            self.assertGreaterEqual(vad.detector.buffer_size, 100)
+            self.assertFalse(vad.is_speech(np.zeros(512, dtype=np.float32)))
+            self.assertTrue(vad.is_speech(np.ones(512, dtype=np.float32)))
+            with self.assertRaises(ValueError):
+                vad.is_speech(np.ones(128, dtype=np.float32))
+
+    def test_smart_turn_expects_probability_from_onnx(self):
+        ort = types.SimpleNamespace(
+            SessionOptions=FakeOptions,
+            ExecutionMode=types.SimpleNamespace(ORT_SEQUENTIAL=1),
+            GraphOptimizationLevel=types.SimpleNamespace(ORT_ENABLE_ALL=2),
+            InferenceSession=FakeSession,
+        )
+        transformers = types.SimpleNamespace(WhisperFeatureExtractor=FakeFeatureExtractor)
+        with patch.dict(sys.modules, {"onnxruntime": ort, "transformers": transformers}), patch.object(models, "require_model", return_value="fake.onnx"):
+            turn = models.SmartTurnDetector("fake.onnx", threshold=0.5)
+            self.assertTrue(turn.complete(np.ones(16000, dtype=np.float32)))
+            turn.threshold = 0.9
+            self.assertFalse(turn.complete(np.ones(16000, dtype=np.float32)))
+
+
+if __name__ == "__main__":
+    unittest.main()

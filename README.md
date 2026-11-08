@@ -1,5 +1,21 @@
 # Alexios
 
+## V3 experimental — fala por turnos e vários locutores
+
+Na branch `feature/turn-aware-multispeaker-v3`, o executável
+`python continuous_v3.py` adiciona Silero VAD, Smart Turn e CAM++.
+Ele envia **um evento por turno**, além de sinais de abertura de fala e
+atividade, sem compartilhar o histórico em memórias separadas por locutor.
+
+A V3 é experimental e depende do protocolo `/v3` no `alexios-web`,
+**ainda não publicado**. `python continuous.py` continua usando o modo V2.
+
+Para instruções de instalação no Raspberry Pi 4, pesos ONNX, endpoints
+necessários e limitações conhecidas, leia [V3.md](V3.md).
+
+---
+
+
 Assistente local com captura de áudio e transcrição em português. O **modo contínuo V2**
 usa somente a API de produção do [Alexios Web](https://alexios-web.vercel.app);
 a IA, o contexto e a personagem ficam no servidor (Vercel + Neon).

@@ -284,6 +284,10 @@ class EventDispatcher:
                     break
             finally:
                 self.events.task_done()
+                # Desreferencie áudio/transcrição após o ACK (ou falha).
+                # Somente a assinatura compacta permanece por curto prazo.
+                event = None
+                prepared = None
 
     def shutdown(self) -> None:
         self.stop_event.set()

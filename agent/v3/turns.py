@@ -79,7 +79,9 @@ class TurnEngine:
         self.max_pause = max_pause_ms * SAMPLE_RATE // 1000
         self.floor_silence = floor_silence_ms * SAMPLE_RATE // 1000
         self.max_samples = max_segment_s * SAMPLE_RATE
-        self.preroll_samples = preroll_ms * SAMPLE_RATE
+        # Convert milliseconds to samples. Without // 1000, 192 ms became
+        # 192 seconds of replayed audio across consecutive speech turns.
+        self.preroll_samples = preroll_ms * SAMPLE_RATE // 1000
         self.clock = 0
         self.activity_epoch = initial_epoch
         self.has_spoken = False

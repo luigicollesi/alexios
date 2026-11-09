@@ -192,6 +192,14 @@ class TurnEngine:
         events: list[LocalEvent] = []
 
         if speech and not self.voiced:
+            # A completed turn has no active voiced span. If any old
+            # turn_parts survived, discard them before starting a new turn.
+            # A genuine unfinished pause still has first_voice_sample set.
+            if self.first_voice_sample is None and self.turn_parts:
+                self.turn_parts.clear()
+                self.turn_length = 0
+                self.voice_parts.clear()
+                self.voice_length = 0
             self.activity_epoch += 1
             self.floor_sent = False
             self.has_spoken = True

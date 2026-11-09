@@ -1,0 +1,26 @@
+name: Ambient Python Tests
+
+on:
+  push:
+    branches: [feature/ambient-listening, feature/web-v2-client, feature/turn-aware-multispeaker-v3, fix/v3-vad-audio-diagnostics, fix/v3-speaker-stability, fix/v3-turn-audio-replay, feat/v3-contextual-transcription]
+  pull_request:
+    branches: [main, feature/turn-aware-multispeaker-v3, fix/v3-speaker-stability, fix/v3-turn-audio-replay]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "numpy>=1.26,<3"
+      - name: Compile Python
+        run: python -m compileall -q continuous.py continuous_v3.py audio_windows.py agent scripts tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v

@@ -1,61 +1,96 @@
 # Alexios
 
-Assistente de voz em Python: capta áudio pelo microfone, transcreve localmente com Faster-Whisper e envia **somente o texto transcrito** ao NVIDIA Nemotron 3 Ultra (free), via OpenRouter. A resposta textual aparece no terminal.
+## V3 experimental — fala por turnos e vários locutores
 
-## Requisitos
+Na branch `feature/turn-aware-multispeaker-v3`, o executável
+`python continuous_v3.py` adiciona Silero VAD, Smart Turn e CAM++.
+Ele envia **um evento por turno**, além de sinais de abertura de fala e
+atividade, sem compartilhar o histórico em memórias separadas por locutor.
 
-- Windows 64 bits e Python **3.12** (Python 3.15 não é compatível com a dependência CTranslate2 utilizada nesta versão).
-- Microfone e acesso à internet para a API OpenRouter.
-- Chave de API criada em https://openrouter.ai/settings/keys
+A V3 é experimental e depende do protocolo `/v3` no `alexios-web`,
+**ainda não publicado**. `python continuous.py` continua usando o modo V2.
 
-## Instalação (CMD do Windows)
+Para instruções de instalação no Raspberry Pi 4, pesos ONNX, endpoints
+necessários e limitações conhecidas, leia [V3.md](V3.md).
 
-```cmd
+---
+
+
+Assistente local com captura de áudio e transcrição em português. O **modo contínuo V2**
+usa somente a API de produção do [Alexios Web](https://alexios-web.vercel.app);
+a IA, o contexto e a personagem ficam no servidor (Vercel + Neon).
+
+## Modo contínuo — integração V2
+
+- Microfone local a 16 kHz; janelas de 4 segundos a cada 3 segundos.
+- Whisper local com timestamps; envia somente palavras ao servidor.
+- Long polling exclusivo para **presença** e **comandos de captura**.
+- **FIM** desliga o microfone, mas mantém o long polling.
+- **INICIAR** retoma a captura com novo `captureId`.
+- IA, respostas e troca de postura aparecem **somente na web**.
+- **Ctrl+C** ou SIGTERM encerra também o polling e libera os recursos locais.
+- Reconexão progressiva, upload com retries da mesma janela e memória limitada.
+
+### Instalação (Python 3.12)
+
+```bash
 git clone https://github.com/luigicollesi/alexios.git
 cd alexios
-py -3.12 -m venv .venv
-.venv\Scripts\activate.bat
+git switch feature/web-v2-client
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
+cp .env.example .env
 ```
 
-Se já clonou o repositório, use `git pull origin main` em vez de `git clone`.
+Edite o `.env`:
 
-Crie um arquivo `.env` na raiz do projeto, copiando o exemplo `.env.example`:
-
-```env
-OPENROUTER_API_KEY=sk-or-v1-sua-chave-aqui
+```dotenv
+ALEXIOS_BRIDGE_URL=https://alexios-web.vercel.app
+ALEXIOS_AGENT_TOKEN=TOKEN_PRIVADO_IGUAL_AO_DA_VERCEL
+ALEXIOS_INSTANCE_ID=alx_IDENTIFICADOR_FIXO_GERADO_ALEATORIAMENTE
 ```
 
-Nunca envie a chave ao GitHub: `.env` está incluído no `.gitignore`.
-
-## Execução
-
-```cmd
-python main.py
+Para gerar o identificador **uma vez**:
+```bash
+printf 'alx_%s\n' "$(openssl rand -hex 24)"
 ```
 
-Pressione Enter para começar a gravação, fale e pressione Enter novamente para parar. A transcrição será enviada ao modelo e a resposta será impressa no terminal. Pressione Enter para gravar outra pergunta ou digite `n` para sair.
+Use o mesmo ID no botão **AUTORIZAR ACESSO** do painel. Trate-o como senha:
+quem o conhece consegue autorizar o acesso àquela instância.
 
-Para listar ou escolher microfones:
+### Execução
 
-```cmd
+```bash
+python continuous.py --list-devices
+python continuous.py --device 10 --model base
+```
+
+Para usar o microfone padrão, omita `--device`. O `--no-tts` antigo continua
+aceito, mas não executa nenhuma ação, pois o modo V2 não possui TTS local.
+
+Confira [AMBIENT.md](AMBIENT.md) para os contratos HTTP, fluxos de
+reconexão, estados e diagnósticos.
+
+## Modo interativo legado
+
+O `main.py` continua disponível e **não faz parte do modo V2**. Ele capta
+manualmente entre dois Enter e consulta o OpenRouter pelo próprio Python.
+
+Para esse modo legado, configure `OPENROUTER_API_KEY` e execute:
+
+```bash
 python main.py --list-devices
 python main.py --device 2
 ```
 
-Para trocar o modelo de transcrição local:
+## Testes automatizados
 
-```cmd
-python main.py --model tiny
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q continuous.py audio_windows.py agent tests
 ```
 
-## Organização
-
-- `main.py`: todo o fluxo (microfone, transcrição, solicitação HTTP e histórico temporário).
-- `context.py`: contexto base do assistente enviado como mensagem `system`.
-- `.env`: chave privada da API; não versionado.
-- `.env.example`: modelo sem credenciais reais.
-
-O histórico das últimas seis interações é mantido apenas na memória do processo para contextualizar perguntas subsequentes. Não há banco de dados nem síntese de voz nesta etapa. Erros de API não são adicionados ao histórico.
-
-O endpoint gratuito pode ter limites de requisições e políticas de tratamento de dados. Evite enviar informações pessoais ou confidenciais pela versão gratuita.
+Nunca suba o arquivo `.env` para o GitHub. O áudio cru permanece no computador,
+mas as transcrições seguem para a Vercel, Neon e OpenRouter; informe as pessoas
+presentes antes de ativar a captura contínua.

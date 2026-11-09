@@ -169,9 +169,15 @@ class EventDispatcher:
         print(f"[WHISPER] {len(text)} caracteres em {elapsed:.1f}s.", flush=True)
         if self.debug_audio:
             print(f"[WHISPER] texto: {text[:250]}", flush=True)
-        speaker_id = self.speakers.identify(event.audio)
+        voice = event.speaker_audio if event.speaker_audio is not None else event.audio
+        speaker_id = self.speakers.identify(voice)
         if self.debug_audio:
-            print(f"[CAM++] locutor={speaker_id}", flush=True)
+            print(
+                f"[CAM++] locutor={speaker_id} "
+                f"voz_util={len(voice) / 16000:.2f}s "
+                f"turno_total={len(event.audio) / 16000:.2f}s",
+                flush=True,
+            )
         kind = "turn_end" if event.complete else "turn_chunk"
         return _Pending(kind, sequence, event_id, {
             "eventId": event_id,

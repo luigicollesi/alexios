@@ -109,6 +109,19 @@ class TurnEngineTests(unittest.TestCase):
         self.assertEqual(len(turns[0].speaker_audio), 25 * len(FRAME))
 
 
+    def test_preroll_is_192_milliseconds_not_192_seconds(self):
+        engine = TurnEngine(StubClassifier(complete=True), preroll_ms=192)
+        self.assertEqual(engine.preroll_samples, 3072)
+        self.frames(engine, 800, False)  # 25.6 seconds of ambient audio
+        self.assertEqual(engine.preroll_length, 3072)
+        self.assertLessEqual(len(engine.preroll), 6)
+        events = self.frames(engine, 28, True)
+        events += self.frames(engine, 45, False)
+        turns = [e for e in events if isinstance(e, CapturedTurn)]
+        self.assertEqual(len(turns), 1)
+        self.assertGreater(turns[0].started_ms, 25_000)
+        self.assertLess(len(turns[0].audio), 2 * SAMPLE_RATE)
+
     def test_separate_turns_never_replay_previous_voice_or_restart_at_zero(self):
         """Reproduz regressão de start_ms=0 e áudio de 5/19/36 segundos."""
         engine = TurnEngine(StubClassifier(complete=True))

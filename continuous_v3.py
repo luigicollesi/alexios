@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument("--speaker-min-voice-seconds", type=float, default=0.8)
     parser.add_argument("--speaker-min-enroll-seconds", type=float, default=1.8)
     parser.add_argument("--speaker-near-margin", type=float, default=0.07)
+    parser.add_argument("--speaker-distinct-max-similarity", type=float, default=0.20)
     parser.add_argument("--model-threads", type=int, default=1)
     parser.add_argument("--debug-audio", action="store_true",
                         help="Mostra volume, VAD, decisões do Smart Turn e etapas HTTP/ASR")
@@ -110,6 +111,7 @@ def main() -> int:
             min_voice_seconds=args.speaker_min_voice_seconds,
             min_enroll_seconds=args.speaker_min_enroll_seconds,
             near_match_margin=args.speaker_near_margin,
+            distinct_voice_max_similarity=args.speaker_distinct_max_similarity,
         )
         # Prioridade para menor carga no Pi 4. O modelo STT pode ser trocado
         # sem alterar os contratos da rede.

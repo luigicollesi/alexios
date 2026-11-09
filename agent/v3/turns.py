@@ -92,6 +92,9 @@ class TurnEngine:
         # stale turn_parts: an old buffer must never enter a new ASR request.
         self.first_voice_sample: int | None = None
         self.last_voice_sample: int | None = None
+        # Indices in turn_parts, not inferred from stale absolute timestamps.
+        self.first_voice_offset: int | None = None
+        self.last_voice_offset: int | None = None
         self.turn_parts: list[np.ndarray] = []
         self.turn_length = 0
         self.voice_parts: deque[np.ndarray] = deque()
@@ -136,24 +139,23 @@ class TurnEngine:
 
     def _finish(self, *, complete: bool, end_sample: int) -> CapturedTurn:
         raw_audio = self._audio()
-        # The buffered frames are contiguous and end at 'clock'. Derive
-        # offsets from the audio itself, NOT from turn_start, which can be
-        # stale when a VAD backend holds a segment open too long.
-        raw_start = self.clock - len(raw_audio)
         first = self.first_voice_sample
         last = self.last_voice_sample
-        if first is not None and last is not None:
-            # Leave a little context around the actual voiced interval for
-            # Whisper; never include earlier turns or long leading silence.
-            desired_start = max(raw_start, first - self.preroll_samples)
-            desired_end = min(self.clock, last + self.min_pause)
-            left = max(0, desired_start - raw_start)
-            right = min(len(raw_audio), desired_end - raw_start)
+        if (first is not None and last is not None
+                and self.first_voice_offset is not None
+                and self.last_voice_offset is not None):
+            # Indices are tracked as new frames are appended, so an
+            # accidentally retained prefix cannot shift the selected voice.
+            left = max(0, self.first_voice_offset - self.preroll_samples)
+            right = min(len(raw_audio), self.last_voice_offset + self.min_pause)
             audio = np.ascontiguousarray(raw_audio[left:right])
-            start_sample = desired_start
+            # Absolute metadata reflects new voiced frames, not a stale
+            # zero-based buffer. Preserve a small pre-roll for Whisper.
+            start_sample = max(0, first - min(self.preroll_samples,
+                                               self.first_voice_offset))
         else:
             audio = np.ascontiguousarray(raw_audio)
-            start_sample = raw_start
+            start_sample = max(0, self.clock - len(raw_audio))
         turn = CapturedTurn(
             turn_id=str(uuid4()),
             audio=audio,
@@ -170,6 +172,8 @@ class TurnEngine:
         self.turn_length = 0
         self.first_voice_sample = None
         self.last_voice_sample = None
+        self.first_voice_offset = None
+        self.last_voice_offset = None
         self.last_check = 0
         return turn
 
@@ -200,7 +204,9 @@ class TurnEngine:
         if speech:
             if self.first_voice_sample is None:
                 self.first_voice_sample = start
+                self.first_voice_offset = self.turn_length
             self.last_voice_sample = self.clock
+            self.last_voice_offset = self.turn_length + len(samples)
             self.silence_samples = 0
             self.last_check = 0
             self._append_voice(samples)

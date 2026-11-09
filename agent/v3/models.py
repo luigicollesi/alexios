@@ -137,7 +137,9 @@ class CamPlusRegistry:
         self.candidate_ttl_s = candidate_ttl_s
         self.counter = 0
         # Embeddings somente em memória da sessão, nunca em logs/arquivos.
-        self.references: dict[str, np.ndarray] = {}
+        # Galeria pequena de amostras independentes para acomodar variação de voz.
+        # Mantida em RAM, sem depender de add_list das diferentes versões Python.
+        self.references: dict[str, list[np.ndarray]] = {}
         self.candidate: tuple[np.ndarray, float] | None = None
         self.last_decision: dict[str, str | float] = {"reason": "not_started"}
 
@@ -190,16 +192,38 @@ class CamPlusRegistry:
         # Preserve the known sherpa-onnx search behavior and its threshold.
         matched = self.manager.search(embedding, threshold=self.threshold)
         if matched:
+            label = str(matched)
             self.candidate = None
+            # Atualiza a galeria só com uma amostra longa E muito semelhante
+            # ao locutor identificado pelo sherpa. Nunca aprende de unknown.
+            gallery = self.references.get(label)
+            if gallery and len(samples) >= self.enroll_samples:
+                reference_score = max(self._similarity(normalized, ref) for ref in gallery)
+                if (reference_score >= self.threshold + 0.12
+                        and reference_score < 0.99 and len(gallery) < 3):
+                    gallery.append(normalized.copy())
             self.last_decision = {
                 "reason": "recognized", "voice_seconds": round(duration, 2),
             }
-            return str(matched)
+            return label
 
-        similarity = max((
-            self._similarity(normalized, prior)
-            for prior in self.references.values()
-        ), default=0.0)
+        ranked = sorted((
+            (max(self._similarity(normalized, ref) for ref in gallery), label)
+            for label, gallery in self.references.items() if gallery
+        ), reverse=True)
+        similarity = ranked[0][0] if ranked else 0.0
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        # Uma segunda amostra confirmada pode recuperar uma voz que já mudou
+        # de timbre/volume desde a amostra inaugural, com margem conservadora.
+        if (ranked and similarity >= self.threshold + 0.08
+                and (len(ranked) == 1 or similarity - runner_up >= 0.08)):
+            self.candidate = None
+            self.last_decision = {
+                "reason": "gallery_recovered",
+                "voice_seconds": round(duration, 2),
+                "best_similarity": round(similarity, 3),
+            }
+            return ranked[0][1]
         if len(samples) < self.enroll_samples:
             return self._decision("short_unmatched", duration, similarity)
 
@@ -221,7 +245,7 @@ class CamPlusRegistry:
         if not self.manager.add(speaker_id, embedding):
             raise RuntimeError("CAM++ não conseguiu cadastrar o embedding.")
         self.counter += 1
-        self.references[speaker_id] = normalized.copy()
+        self.references[speaker_id] = [normalized.copy()]
         self.candidate = None
         self.last_decision = {
             "reason": "enrolled", "voice_seconds": round(duration, 2),

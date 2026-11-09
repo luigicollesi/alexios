@@ -108,6 +108,54 @@ class TurnEngineTests(unittest.TestCase):
         self.assertEqual(len(turns), 1)
         self.assertEqual(len(turns[0].speaker_audio), 25 * len(FRAME))
 
+
+    def test_separate_turns_never_replay_previous_voice_or_restart_at_zero(self):
+        """Reproduz regressão de start_ms=0 e áudio de 5/19/36 segundos."""
+        engine = TurnEngine(StubClassifier(complete=True))
+        turns = []
+        for n, magnitude in ((32, 0.11), (65, 0.22), (90, 0.33)):
+            frame = np.full(512, magnitude, dtype=np.float32)
+            self.frames(engine, 100, False)
+            for _ in range(n):
+                engine.feed(frame, True)
+            events = self.frames(engine, 45, False)
+            newest = [e for e in events if isinstance(e, CapturedTurn)]
+            self.assertEqual(len(newest), 1)
+            turns.append(newest[0])
+        self.assertEqual(len(turns), 3)
+        self.assertTrue(turns[0].started_ms > 0)
+        for i in (1, 2):
+            self.assertGreater(turns[i].started_ms, turns[i - 1].ended_ms)
+        for turn, (n, magnitude) in zip(turns, ((32, 0.11), (65, 0.22), (90, 0.33))):
+            self.assertLessEqual(len(turn.audio), (n + 20) * 512)
+            self.assertTrue(np.any(np.isclose(turn.audio, magnitude)))
+            self.assertEqual(len(turn.speaker_audio), n * 512)
+        self.assertFalse(np.any(np.isclose(turns[1].audio, 0.11)))
+        self.assertFalse(np.any(np.isclose(turns[2].audio, 0.22)))
+
+    def test_a_stale_cumulative_buffer_is_trimmed_to_this_turn_only(self):
+        """Safeguard even if an upstream regression leaves old audio frames."""
+        engine = TurnEngine(StubClassifier(complete=True))
+        old = np.full(512, 0.27, dtype=np.float32)
+        new = np.full(512, 0.53, dtype=np.float32)
+        for _ in range(30):
+            engine.feed(old, True)
+        first_events = self.frames(engine, 45, False)
+        self.assertEqual(len([e for e in first_events if isinstance(e, CapturedTurn)]), 1)
+        self.frames(engine, 30, False)
+        # Reproduce a corrupted retained buffer. Bounds from VAD frame clock
+        # still ensure Whisper gets only newly voiced audio.
+        engine.turn_parts = [np.full(45 * 512, 0.27, dtype=np.float32)]
+        engine.turn_length = 45 * 512
+        for _ in range(35):
+            engine.feed(new, True)
+        next_events = self.frames(engine, 45, False)
+        turns = [e for e in next_events if isinstance(e, CapturedTurn)]
+        self.assertEqual(len(turns), 1)
+        self.assertFalse(np.any(np.isclose(turns[0].audio, 0.27)))
+        self.assertTrue(np.any(np.isclose(turns[0].audio, 0.53)))
+        self.assertGreater(turns[0].started_ms, 0)
+
     def test_no_floor_without_prior_speech(self):
         engine = TurnEngine(StubClassifier())
         self.assertEqual(self.frames(engine, 200, False), [])

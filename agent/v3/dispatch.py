@@ -175,7 +175,8 @@ class EventDispatcher:
             print(
                 f"[CAM++] locutor={speaker_id} "
                 f"voz_util={len(voice) / 16000:.2f}s "
-                f"turno_total={len(event.audio) / 16000:.2f}s",
+                f"turno_total={len(event.audio) / 16000:.2f}s "
+                f"qualidade={getattr(self.speakers, 'last_decision', {})}",
                 flush=True,
             )
         kind = "turn_end" if event.complete else "turn_chunk"

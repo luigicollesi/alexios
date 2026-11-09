@@ -114,6 +114,7 @@ class CamPlusRegistry:
         min_voice_seconds: float = 0.8, min_enroll_seconds: float = 1.8,
         threads: int = 1, near_match_margin: float = 0.07,
         candidate_ttl_s: float = 180.0,
+        distinct_voice_max_similarity: float = 0.20,
     ) -> None:
         import sherpa_onnx
         if not 0 < threshold < 1:
@@ -122,6 +123,8 @@ class CamPlusRegistry:
             raise ValueError("Durações de verificação/cadastro inválidas.")
         if not 0 < near_match_margin < threshold:
             raise ValueError("Margem de identificação inválida.")
+        if not 0 <= distinct_voice_max_similarity < threshold - near_match_margin:
+            raise ValueError("Limite de voz claramente distinta inválido.")
         config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
             model=require_model(model_path),
             num_threads=max(1, threads), provider="cpu", debug=False,
@@ -135,6 +138,9 @@ class CamPlusRegistry:
         self.enroll_samples = round(min_enroll_seconds * SAMPLE_RATE)
         self.near_match_margin = near_match_margin
         self.candidate_ttl_s = candidate_ttl_s
+        # Only a *very different*, sufficiently long recording can acquire an
+        # ID on the first encounter. Borderline voices still need confirmation.
+        self.distinct_voice_max_similarity = distinct_voice_max_similarity
         self.counter = 0
         # Embeddings somente em memória da sessão, nunca em logs/arquivos.
         # Galeria pequena de amostras independentes para acomodar variação de voz.
@@ -161,8 +167,21 @@ class CamPlusRegistry:
         }
         return "speaker_unknown"
 
+    def _enroll(self, embedding: np.ndarray, normalized: np.ndarray,
+                duration: float, reason: str) -> str:
+        speaker_id = f"speaker_{self.counter + 1:02d}"
+        if not self.manager.add(speaker_id, embedding):
+            raise RuntimeError("CAM++ não conseguiu cadastrar o embedding.")
+        self.counter += 1
+        self.references[speaker_id] = [normalized.copy()]
+        self.candidate = None
+        self.last_decision = {
+            "reason": reason, "voice_seconds": round(duration, 2),
+        }
+        return speaker_id
+
     def identify(self, samples: np.ndarray) -> str:
-        """Find a speaker or defer enrollment until adequate voice evidence."""
+        """Reuse an existing ID first; cautiously enroll genuinely new voices."""
         import time
 
         samples = np.asarray(samples, dtype=np.float32).reshape(-1)
@@ -193,7 +212,8 @@ class CamPlusRegistry:
         matched = self.manager.search(embedding, threshold=self.threshold)
         if matched:
             label = str(matched)
-            self.candidate = None
+            # Não apague um candidato a nova voz quando outro locutor fala.
+            # Caso contrário A → B incerto → A → B nunca confirmaria B.
             # Atualiza a galeria só com uma amostra longa E muito semelhante
             # ao locutor identificado pelo sherpa. Nunca aprende de unknown.
             gallery = self.references.get(label)
@@ -217,7 +237,8 @@ class CamPlusRegistry:
         # de timbre/volume desde a amostra inaugural, com margem conservadora.
         if (ranked and similarity >= self.threshold + 0.08
                 and (len(ranked) == 1 or similarity - runner_up >= 0.08)):
-            self.candidate = None
+            # A galeria recuperou um locutor antigo. Preserve qualquer
+            # candidato independente ainda aguardando segunda amostra.
             self.last_decision = {
                 "reason": "gallery_recovered",
                 "voice_seconds": round(duration, 2),
@@ -231,6 +252,15 @@ class CamPlusRegistry:
         if self.references and similarity >= self.threshold - self.near_match_margin:
             return self._decision("near_existing_unknown", duration, similarity)
 
+        # A new, well-recorded voice that is *clearly* different from every
+        # known voice can be labeled immediately: A -> 01, B -> 02, A -> 01.
+        # For anything less distinctive, keep the two-sample safeguard.
+        if self.references and similarity <= self.distinct_voice_max_similarity:
+            return self._enroll(embedding, normalized, duration, "enrolled_distinct")
+
+        if not self.references:
+            return self._enroll(embedding, normalized, duration, "enrolled")
+
         now = time.monotonic()
         if self.references:
             if self.candidate is None or now - self.candidate[1] > self.candidate_ttl_s:
@@ -241,13 +271,4 @@ class CamPlusRegistry:
                 self.candidate = (normalized.copy(), now)
                 return self._decision("candidate_changed", duration, similarity)
 
-        speaker_id = f"speaker_{self.counter + 1:02d}"
-        if not self.manager.add(speaker_id, embedding):
-            raise RuntimeError("CAM++ não conseguiu cadastrar o embedding.")
-        self.counter += 1
-        self.references[speaker_id] = [normalized.copy()]
-        self.candidate = None
-        self.last_decision = {
-            "reason": "enrolled", "voice_seconds": round(duration, 2),
-        }
-        return speaker_id
+        return self._enroll(embedding, normalized, duration, "enrolled_confirmed")

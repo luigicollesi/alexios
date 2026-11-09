@@ -79,7 +79,9 @@ class TurnEngine:
         self.max_pause = max_pause_ms * SAMPLE_RATE // 1000
         self.floor_silence = floor_silence_ms * SAMPLE_RATE // 1000
         self.max_samples = max_segment_s * SAMPLE_RATE
-        self.preroll_samples = preroll_ms * SAMPLE_RATE
+        # Convert milliseconds to samples. Without // 1000, 192 ms became
+        # 192 seconds of replayed audio across consecutive speech turns.
+        self.preroll_samples = preroll_ms * SAMPLE_RATE // 1000
         self.clock = 0
         self.activity_epoch = initial_epoch
         self.has_spoken = False
@@ -88,6 +90,13 @@ class TurnEngine:
         self.silence_samples = 0
         self.last_check = 0
         self.turn_start = 0
+        # Sample-accurate bounds for the current utterance, independent of
+        # stale turn_parts: an old buffer must never enter a new ASR request.
+        self.first_voice_sample: int | None = None
+        self.last_voice_sample: int | None = None
+        # Indices in turn_parts, not inferred from stale absolute timestamps.
+        self.first_voice_offset: int | None = None
+        self.last_voice_offset: int | None = None
         self.turn_parts: list[np.ndarray] = []
         self.turn_length = 0
         self.voice_parts: deque[np.ndarray] = deque()
@@ -107,7 +116,7 @@ class TurnEngine:
     def _remember_preroll(self, frame: np.ndarray) -> None:
         self.preroll.append(frame.copy())
         self.preroll_length += len(frame)
-        while self.preroll and self.preroll_length > self.preroll_samples + len(frame):
+        while self.preroll and self.preroll_length > self.preroll_samples:
             self.preroll_length -= len(self.preroll.popleft())
 
     def _append(self, frame: np.ndarray) -> None:
@@ -131,19 +140,42 @@ class TurnEngine:
         return np.ascontiguousarray(np.concatenate(self.voice_parts), dtype=np.float32)
 
     def _finish(self, *, complete: bool, end_sample: int) -> CapturedTurn:
+        raw_audio = self._audio()
+        first = self.first_voice_sample
+        last = self.last_voice_sample
+        if (first is not None and last is not None
+                and self.first_voice_offset is not None
+                and self.last_voice_offset is not None):
+            # Indices are tracked as new frames are appended, so an
+            # accidentally retained prefix cannot shift the selected voice.
+            left = max(0, self.first_voice_offset - self.preroll_samples)
+            right = min(len(raw_audio), self.last_voice_offset + self.min_pause)
+            audio = np.ascontiguousarray(raw_audio[left:right])
+            # Absolute metadata reflects new voiced frames, not a stale
+            # zero-based buffer. Preserve a small pre-roll for Whisper.
+            start_sample = max(0, first - min(self.preroll_samples,
+                                               self.first_voice_offset))
+        else:
+            audio = np.ascontiguousarray(raw_audio)
+            start_sample = max(0, self.clock - len(raw_audio))
         turn = CapturedTurn(
             turn_id=str(uuid4()),
-            audio=self._audio(),
-            started_ms=self.turn_start * 1000 // SAMPLE_RATE,
+            audio=audio,
+            started_ms=start_sample * 1000 // SAMPLE_RATE,
             ended_ms=end_sample * 1000 // SAMPLE_RATE,
             complete=complete,
             activity_epoch=self.activity_epoch,
             speaker_audio=self._voice_audio(),
         )
+        # Drop *all* audio references as soon as a CapturedTurn is emitted.
         self.voice_parts.clear()
         self.voice_length = 0
         self.turn_parts.clear()
         self.turn_length = 0
+        self.first_voice_sample = None
+        self.last_voice_sample = None
+        self.first_voice_offset = None
+        self.last_voice_offset = None
         self.last_check = 0
         return turn
 
@@ -162,6 +194,14 @@ class TurnEngine:
         events: list[LocalEvent] = []
 
         if speech and not self.voiced:
+            # A completed turn has no active voiced span. If any old
+            # turn_parts survived, discard them before starting a new turn.
+            # A genuine unfinished pause still has first_voice_sample set.
+            if self.first_voice_sample is None and self.turn_parts:
+                self.turn_parts.clear()
+                self.turn_length = 0
+                self.voice_parts.clear()
+                self.voice_length = 0
             self.activity_epoch += 1
             self.floor_sent = False
             self.has_spoken = True
@@ -172,6 +212,11 @@ class TurnEngine:
                     self._append(part)
         self.voiced = speech
         if speech:
+            if self.first_voice_sample is None:
+                self.first_voice_sample = start
+                self.first_voice_offset = self.turn_length
+            self.last_voice_sample = self.clock
+            self.last_voice_offset = self.turn_length + len(samples)
             self.silence_samples = 0
             self.last_check = 0
             self._append_voice(samples)

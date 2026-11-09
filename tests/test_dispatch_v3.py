@@ -117,6 +117,52 @@ class DispatchTests(unittest.TestCase):
         finally:
             sender.shutdown()
 
+
+    def test_cumulative_audio_is_not_sent_twice_but_a_new_repetition_is(self):
+        """One previous recording reappears as a raw prefix; remove it."""
+        client = FakeClient()
+        class AudioTranscriber:
+            def __init__(self):
+                self.received = []
+            def transcribe(self, audio):
+                self.received.append(audio.copy())
+                if float(audio[0]) < 0.3:
+                    return "Bom dia"
+                return "Qual é seu nome?"
+        transcriber = AudioTranscriber()
+        dispatcher = EventDispatcher(client, transcriber, FakeSpeakers(),
+                                     next_sequence=100, debug_audio=False)
+        old = np.full(16000, 0.15, dtype=np.float32)
+        fresh = np.full(16000, 0.35, dtype=np.float32)
+        repeated = np.full(16000, 0.16, dtype=np.float32)
+        try:
+            for epoch, n, samples, started, ended in (
+                    (1, 1, old, 0, 1000),
+                    (2, 2, np.concatenate((old, fresh)), 0, 2000),
+                    (3, 3, repeated, 3000, 4000)):
+                dispatcher.speech_started(epoch)
+                self.assertTrue(wait_until(
+                    lambda: dispatcher.acknowledged_activity >= epoch))
+                dispatcher.enqueue(CapturedTurn(
+                    turn_id=f"turn-{n}", audio=samples,
+                    started_ms=started, ended_ms=ended,
+                    complete=True, activity_epoch=epoch,
+                ))
+                self.assertTrue(wait_until(lambda: len(client.events) == n))
+            self.assertEqual(
+                [p["transcript"] for _, p in client.events],
+                ["Bom dia", "Qual é seu nome?", "Bom dia"],
+            )
+            self.assertEqual([len(audio) for audio in transcriber.received],
+                             [16000, 16000, 16000])
+            self.assertEqual(client.events[1][1]["startedAtMs"], 1000)
+            self.assertEqual([p["sequence"] for _, p in client.events],
+                             [100, 101, 102])
+            self.assertIsInstance(dispatcher.last_confirmed_audio[1], bytes)
+            self.assertLessEqual(len(dispatcher.last_confirmed_audio[1]), 16)
+        finally:
+            dispatcher.shutdown()
+
     def test_empty_transcription_does_not_open_floor(self):
         client = FakeClient()
         class EmptyTranscriber:

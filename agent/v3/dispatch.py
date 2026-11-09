@@ -9,14 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import queue
 import sys
 import threading
 import time
 from uuid import uuid4
 
+import numpy as np
+
 from agent.bridge import BridgeError
-from .turns import CapturedTurn, FloorOpened
+from .turns import SAMPLE_RATE, CapturedTurn, FloorOpened
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class _Pending:
     sequence: int
     event_id: str
     payload: dict
+    audio_signature: tuple[int, bytes] | None = None
 
 
 class EventDispatcher:
@@ -49,6 +53,10 @@ class EventDispatcher:
         self.debug_audio = debug_audio
         # Não abrir piso de fala após transcrição vazia/ruído.
         self.last_confirmed_turn_epoch = -1
+        # Fingerprint only, not raw audio/transcript. It is updated *after*
+        # server acknowledgement; a retried event keeps its original payload.
+        self.last_confirmed_audio: tuple[int, bytes] | None = None
+        self.last_confirmed_audio_at = 0.0
         self.events: queue.Queue[CapturedTurn | FloorOpened] = queue.Queue(maxsize=max_pending)
         self.activity: queue.Queue[int] = queue.Queue(maxsize=16)
         self.stop_event = threading.Event()
@@ -124,6 +132,36 @@ class EventDispatcher:
             finally:
                 self.activity.task_done()
 
+    @staticmethod
+    def _audio_signature(audio: np.ndarray) -> tuple[int, bytes]:
+        samples = np.ascontiguousarray(audio, dtype=np.float32)
+        digest = hashlib.blake2b(samples.tobytes(), digest_size=16).digest()
+        return len(samples), digest
+
+    def _fresh_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Remove an exact old prefix, never a legitimately repeated phrase.
+
+        The signature is discarded after a short interval. No recording or
+        transcript from a confirmed event is retained locally.
+        """
+        samples = np.ascontiguousarray(audio, dtype=np.float32)
+        previous = self.last_confirmed_audio
+        if previous is None or time.monotonic() - self.last_confirmed_audio_at > 90:
+            return samples
+        old_length, old_digest = previous
+        # Only longer *cumulative* buffers are suspicious. An independent
+        # new utterance with the same text but fresh audio passes unchanged.
+        if (old_length < SAMPLE_RATE // 5 or
+                len(samples) <= old_length + SAMPLE_RATE // 10):
+            return samples
+        old_prefix_digest = self._audio_signature(samples[:old_length])[1]
+        if old_prefix_digest != old_digest:
+            return samples
+        if self.debug_audio:
+            print(f"[V3] prefixo de áudio já confirmado removido: "
+                  f"{old_length / SAMPLE_RATE:.2f}s", flush=True)
+        return samples[old_length:]
+
     def _prepare(self, event: CapturedTurn | FloorOpened) -> _Pending | None:
         sequence = self.sequence
         event_id = str(uuid4())
@@ -159,8 +197,10 @@ class EventDispatcher:
             })
         # Não armazenamos contexto por locutor. O servidor mantém uma única
         # memória por instanceId; apenas a etiqueta speakerId é transmitida.
+        raw_signature = self._audio_signature(event.audio)
+        fresh_audio = self._fresh_audio(event.audio)
         started = time.monotonic()
-        text = self.transcriber.transcribe(event.audio)
+        text = self.transcriber.transcribe(fresh_audio)
         elapsed = time.monotonic() - started
         if not text:
             print(f"[WHISPER] transcrição vazia ({elapsed:.1f}s); nada enviado.",
@@ -180,16 +220,22 @@ class EventDispatcher:
                 flush=True,
             )
         kind = "turn_end" if event.complete else "turn_chunk"
+        # If the detector presented a cumulative buffer, update the start
+        # timestamp to describe the new portion only.
+        start_ms = event.started_ms
+        if len(fresh_audio) != len(event.audio):
+            start_ms = max(event.started_ms, event.ended_ms -
+                           round(len(fresh_audio) * 1000 / SAMPLE_RATE))
         return _Pending(kind, sequence, event_id, {
             "eventId": event_id,
             "turnId": event.turn_id,
             "sequence": sequence,
             "speakerId": speaker_id,
             "transcript": text,
-            "startedAtMs": event.started_ms,
+            "startedAtMs": start_ms,
             "endedAtMs": event.ended_ms,
             "activityEpoch": event.activity_epoch,
-        })
+        }, audio_signature=raw_signature)
 
     def _deliver_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -217,6 +263,9 @@ class EventDispatcher:
                         break
                     try:
                         self.client.send_event(prepared.kind, prepared.payload)
+                        if prepared.audio_signature is not None:
+                            self.last_confirmed_audio = prepared.audio_signature
+                            self.last_confirmed_audio_at = time.monotonic()
                         if isinstance(event, CapturedTurn) and event.complete:
                             self.last_confirmed_turn_epoch = event.activity_epoch
                         print(f"[HTTP V3] {prepared.kind} confirmado "

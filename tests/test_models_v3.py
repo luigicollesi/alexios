@@ -185,7 +185,7 @@ class ModelAdapterTests(unittest.TestCase):
             speakers.extractor.compute = lambda stream: [0.0, 1.0]
             self.assertEqual(speakers.identify(good), "speaker_02")
             # A is briefly distorted, close to recognition threshold.
-            speakers.extractor.compute = lambda stream: [0.56, 0.3]
+            speakers.extractor.compute = lambda stream: [0.58, 0.55]
             self.assertEqual(speakers.identify(good), "speaker_unknown")
             self.assertEqual(speakers.last_decision["reason"], "near_existing_unknown")
             speakers.extractor.compute = lambda stream: [1.0, 0.0]

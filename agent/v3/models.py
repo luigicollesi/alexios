@@ -101,15 +101,30 @@ class SmartTurnDetector:
 
 
 class CamPlusRegistry:
-    """Diferencia locutores da sessão; sem nome real nem persistência biométrica."""
+    """Identificação conservadora e efêmera de locutores com CAM++.
+
+    O áudio recebido já contém apenas frames marcados como fala pelo VAD.
+    Nunca transforma uma gravação curta/ruidosa em novo speaker. Um candidato
+    adicional precisa de duas amostras independentes de boa qualidade.
+    Thresholds são hipóteses de engenharia a calibrar com áudio real.
+    """
 
     def __init__(
         self, model_path: str, *, threshold: float = 0.6,
-        min_voice_seconds: float = 0.8, threads: int = 1,
+        min_voice_seconds: float = 0.8, min_enroll_seconds: float = 1.8,
+        threads: int = 1, near_match_margin: float = 0.07,
+        candidate_ttl_s: float = 180.0,
+        distinct_voice_max_similarity: float = 0.20,
     ) -> None:
         import sherpa_onnx
         if not 0 < threshold < 1:
             raise ValueError("threshold de locutor fora do intervalo.")
+        if min_voice_seconds < 0.4 or min_enroll_seconds < min_voice_seconds:
+            raise ValueError("Durações de verificação/cadastro inválidas.")
+        if not 0 < near_match_margin < threshold:
+            raise ValueError("Margem de identificação inválida.")
+        if not 0 <= distinct_voice_max_similarity < threshold - near_match_margin:
+            raise ValueError("Limite de voz claramente distinta inválido.")
         config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
             model=require_model(model_path),
             num_threads=max(1, threads), provider="cpu", debug=False,
@@ -120,28 +135,140 @@ class CamPlusRegistry:
         self.manager = sherpa_onnx.SpeakerEmbeddingManager(self.extractor.dim)
         self.threshold = threshold
         self.min_samples = round(min_voice_seconds * SAMPLE_RATE)
+        self.enroll_samples = round(min_enroll_seconds * SAMPLE_RATE)
+        self.near_match_margin = near_match_margin
+        self.candidate_ttl_s = candidate_ttl_s
+        # Only a *very different*, sufficiently long recording can acquire an
+        # ID on the first encounter. Borderline voices still need confirmation.
+        self.distinct_voice_max_similarity = distinct_voice_max_similarity
         self.counter = 0
+        # Embeddings somente em memória da sessão, nunca em logs/arquivos.
+        # Galeria pequena de amostras independentes para acomodar variação de voz.
+        # Mantida em RAM, sem depender de add_list das diferentes versões Python.
+        self.references: dict[str, list[np.ndarray]] = {}
+        self.candidate: tuple[np.ndarray, float] | None = None
+        self.last_decision: dict[str, str | float] = {"reason": "not_started"}
 
-    def identify(self, samples: np.ndarray) -> str:
-        samples = np.asarray(samples, dtype=np.float32).reshape(-1)
-        if len(samples) < self.min_samples:
-            return "speaker_unknown"
-        # Não é seguro identificar misturas de vozes. O modo inicial pressupõe
-        # um locutor dominante por turno; sobreposição exigirá diarização extra.
-        # Uma janela curta limita o custo do CAM++ em turnos de até 45s.
-        voice = samples[-8 * SAMPLE_RATE:]
-        stream = self.extractor.create_stream()
-        stream.accept_waveform(sample_rate=SAMPLE_RATE,
-                               waveform=np.ascontiguousarray(voice))
-        stream.input_finished()
-        if not self.extractor.is_ready(stream):
-            return "speaker_unknown"
-        embedding = np.asarray(self.extractor.compute(stream), dtype=np.float32)
-        speaker = self.manager.search(embedding, threshold=self.threshold)
-        if speaker:
-            return str(speaker)
-        self.counter += 1
-        speaker_id = f"speaker_{self.counter:02d}"
+    @staticmethod
+    def _similarity(left: np.ndarray, right: np.ndarray) -> float:
+        denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+        if denominator <= 1e-10:
+            return 0.0
+        return float(np.dot(left, right) / denominator)
+
+    def _decision(self, reason: str, voice_seconds: float,
+                  best_similarity: float | None = None) -> str:
+        # Only structural metadata: never raw audio or biometric vectors.
+        self.last_decision = {
+            "reason": reason,
+            "voice_seconds": round(voice_seconds, 2),
+            **({"best_similarity": round(best_similarity, 3)}
+               if best_similarity is not None else {}),
+        }
+        return "speaker_unknown"
+
+    def _enroll(self, embedding: np.ndarray, normalized: np.ndarray,
+                duration: float, reason: str) -> str:
+        speaker_id = f"speaker_{self.counter + 1:02d}"
         if not self.manager.add(speaker_id, embedding):
             raise RuntimeError("CAM++ não conseguiu cadastrar o embedding.")
+        self.counter += 1
+        self.references[speaker_id] = [normalized.copy()]
+        self.candidate = None
+        self.last_decision = {
+            "reason": reason, "voice_seconds": round(duration, 2),
+        }
         return speaker_id
+
+    def identify(self, samples: np.ndarray) -> str:
+        """Reuse an existing ID first; cautiously enroll genuinely new voices."""
+        import time
+
+        samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+        duration = len(samples) / SAMPLE_RATE
+        if len(samples) < self.min_samples or not np.isfinite(samples).all():
+            return self._decision("insufficient_voice", duration)
+        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+        peak = float(np.max(np.abs(samples)))
+        clipping = float(np.mean(np.abs(samples) >= 0.99))
+        if rms < 0.006 or peak > 1.1 or clipping > 0.03:
+            return self._decision("low_quality_voice", duration)
+
+        voice = np.ascontiguousarray(samples[-8 * SAMPLE_RATE:])
+        stream = self.extractor.create_stream()
+        stream.accept_waveform(sample_rate=SAMPLE_RATE, waveform=voice)
+        stream.input_finished()
+        if not self.extractor.is_ready(stream):
+            return self._decision("extractor_not_ready", duration)
+        embedding = np.asarray(self.extractor.compute(stream), dtype=np.float32)
+        if embedding.shape != (self.extractor.dim,) or not np.isfinite(embedding).all():
+            return self._decision("invalid_embedding", duration)
+        norm = float(np.linalg.norm(embedding))
+        if norm <= 1e-10:
+            return self._decision("zero_embedding", duration)
+        normalized = embedding / norm
+
+        # Preserve the known sherpa-onnx search behavior and its threshold.
+        matched = self.manager.search(embedding, threshold=self.threshold)
+        if matched:
+            label = str(matched)
+            # Não apague um candidato a nova voz quando outro locutor fala.
+            # Caso contrário A → B incerto → A → B nunca confirmaria B.
+            # Atualiza a galeria só com uma amostra longa E muito semelhante
+            # ao locutor identificado pelo sherpa. Nunca aprende de unknown.
+            gallery = self.references.get(label)
+            if gallery and len(samples) >= self.enroll_samples:
+                reference_score = max(self._similarity(normalized, ref) for ref in gallery)
+                if (reference_score >= self.threshold + 0.12
+                        and reference_score < 0.99 and len(gallery) < 3):
+                    gallery.append(normalized.copy())
+            self.last_decision = {
+                "reason": "recognized", "voice_seconds": round(duration, 2),
+            }
+            return label
+
+        ranked = sorted((
+            (max(self._similarity(normalized, ref) for ref in gallery), label)
+            for label, gallery in self.references.items() if gallery
+        ), reverse=True)
+        similarity = ranked[0][0] if ranked else 0.0
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        # Uma segunda amostra confirmada pode recuperar uma voz que já mudou
+        # de timbre/volume desde a amostra inaugural, com margem conservadora.
+        if (ranked and similarity >= self.threshold + 0.08
+                and (len(ranked) == 1 or similarity - runner_up >= 0.08)):
+            # A galeria recuperou um locutor antigo. Preserve qualquer
+            # candidato independente ainda aguardando segunda amostra.
+            self.last_decision = {
+                "reason": "gallery_recovered",
+                "voice_seconds": round(duration, 2),
+                "best_similarity": round(similarity, 3),
+            }
+            return ranked[0][1]
+        if len(samples) < self.enroll_samples:
+            return self._decision("short_unmatched", duration, similarity)
+
+        # A borderline match is ambiguous; do not create a duplicate speaker.
+        if self.references and similarity >= self.threshold - self.near_match_margin:
+            return self._decision("near_existing_unknown", duration, similarity)
+
+        # A new, well-recorded voice that is *clearly* different from every
+        # known voice can be labeled immediately: A -> 01, B -> 02, A -> 01.
+        # For anything less distinctive, keep the two-sample safeguard.
+        if self.references and similarity <= self.distinct_voice_max_similarity:
+            return self._enroll(embedding, normalized, duration, "enrolled_distinct")
+
+        if not self.references:
+            return self._enroll(embedding, normalized, duration, "enrolled")
+
+        now = time.monotonic()
+        if self.references:
+            if self.candidate is None or now - self.candidate[1] > self.candidate_ttl_s:
+                self.candidate = (normalized.copy(), now)
+                return self._decision("awaiting_second_sample", duration, similarity)
+            candidate, _ = self.candidate
+            if self._similarity(normalized, candidate) < self.threshold + 0.03:
+                self.candidate = (normalized.copy(), now)
+                return self._decision("candidate_changed", duration, similarity)
+
+        return self._enroll(embedding, normalized, duration, "enrolled_confirmed")

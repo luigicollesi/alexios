@@ -82,6 +82,32 @@ class TurnEngineTests(unittest.TestCase):
         self.assertGreater(len(fragment.audio), 0)
         self.assertIsNone(engine.flush_partial())
 
+
+    def test_speaker_audio_contains_vad_positive_frames_not_trailing_silence(self):
+        engine = TurnEngine(StubClassifier(complete=True))
+        self.frames(engine, 30, True)  # 960 ms of voice
+        events = self.frames(engine, 45, False)
+        turns = [item for item in events if isinstance(item, CapturedTurn)]
+        self.assertEqual(len(turns), 1)
+        turn = turns[0]
+        self.assertIsNotNone(turn.speaker_audio)
+        self.assertEqual(len(turn.speaker_audio), 30 * len(FRAME))
+        self.assertGreater(len(turn.audio), len(turn.speaker_audio))
+        self.assertTrue(np.all(turn.speaker_audio == 0.1))
+
+    def test_speaker_audio_is_bounded_to_eight_seconds_and_resets_on_new_turn(self):
+        engine = TurnEngine(StubClassifier(complete=True), max_segment_s=20)
+        self.frames(engine, 320, True)  # 10.24 s
+        events = self.frames(engine, 45, False)
+        turns = [item for item in events if isinstance(item, CapturedTurn)]
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(len(turns[0].speaker_audio), 8 * SAMPLE_RATE)
+        self.frames(engine, 25, True)
+        events = self.frames(engine, 45, False)
+        turns = [item for item in events if isinstance(item, CapturedTurn)]
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(len(turns[0].speaker_audio), 25 * len(FRAME))
+
     def test_no_floor_without_prior_speech(self):
         engine = TurnEngine(StubClassifier())
         self.assertEqual(self.frames(engine, 200, False), [])

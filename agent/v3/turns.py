@@ -116,7 +116,7 @@ class TurnEngine:
     def _remember_preroll(self, frame: np.ndarray) -> None:
         self.preroll.append(frame.copy())
         self.preroll_length += len(frame)
-        while self.preroll and self.preroll_length > self.preroll_samples + len(frame):
+        while self.preroll and self.preroll_length > self.preroll_samples:
             self.preroll_length -= len(self.preroll.popleft())
 
     def _append(self, frame: np.ndarray) -> None:

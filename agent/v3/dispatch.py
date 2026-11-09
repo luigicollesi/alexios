@@ -209,6 +209,9 @@ class EventDispatcher:
         print(f"[WHISPER] {len(text)} caracteres em {elapsed:.1f}s.", flush=True)
         if self.debug_audio:
             print(f"[WHISPER] texto: {text[:250]}", flush=True)
+            metrics = getattr(self.transcriber, "last_diagnostics", {})
+            if metrics:
+                print(f"[ASR] diagnostico={metrics}", flush=True)
         voice = event.speaker_audio if event.speaker_audio is not None else fresh_audio
         speaker_id = self.speakers.identify(voice)
         if self.debug_audio:

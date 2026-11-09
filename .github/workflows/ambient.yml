@@ -2,9 +2,9 @@ name: Ambient Python Tests
 
 on:
   push:
-    branches: [feature/ambient-listening, feature/web-v2-client, feature/turn-aware-multispeaker-v3, fix/v3-vad-audio-diagnostics]
+    branches: [feature/ambient-listening, feature/web-v2-client, feature/turn-aware-multispeaker-v3, fix/v3-vad-audio-diagnostics, fix/v3-speaker-stability]
   pull_request:
-    branches: [main]
+    branches: [main, feature/turn-aware-multispeaker-v3]
 
 permissions:
   contents: read

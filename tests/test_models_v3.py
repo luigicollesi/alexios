@@ -132,14 +132,65 @@ class ModelAdapterTests(unittest.TestCase):
             self.assertEqual(speakers.identify(short), "speaker_unknown")
             self.assertEqual(speakers.identify(good), "speaker_01")
             self.assertEqual(speakers.identify(good), "speaker_01")
-            self.assertEqual(speakers.identify(other), "speaker_unknown")
-            self.assertEqual(speakers.counter, 1)
-            self.assertEqual(speakers.last_decision["reason"], "awaiting_second_sample")
+            # Duas vozes claramente distintas, registradas imediatamente.
+            self.assertEqual(speakers.identify(other), "speaker_02")
+            self.assertEqual(speakers.last_decision["reason"], "enrolled_distinct")
+            # A voltou a falar: o mesmo ID speaker_01, NUNCA speaker_03.
             self.assertEqual(speakers.identify(good), "speaker_01")
-            self.assertEqual(speakers.identify(other), "speaker_unknown")
             self.assertEqual(speakers.identify(other), "speaker_02")
+            self.assertEqual(speakers.identify(good), "speaker_01")
             self.assertEqual(speakers.counter, 2)
-            self.assertEqual(speakers.identify(other), "speaker_02")
+            self.assertEqual(set(speakers.references), {"speaker_01", "speaker_02"})
+
+    def test_ambiguous_B_candidate_survives_interleaved_A_and_keeps_A_id(self):
+        """A→01, B incerto→unknown, A→01, B novamente→02, A→01."""
+        sherpa = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,
+            SpeakerEmbeddingExtractor=FakeExtractor,
+            SpeakerEmbeddingManager=FakeManager,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(
+            models, "require_model", return_value="fake.onnx",
+        ):
+            speakers = models.CamPlusRegistry("fake.onnx")
+            audio = np.full(32000, 0.1, dtype=np.float32)
+            speakers.extractor.compute = lambda stream: [1.0, 0.0]
+            self.assertEqual(speakers.identify(audio), "speaker_01")
+            # B is different but not dissimilar enough for instant enrollment.
+            speakers.extractor.compute = lambda stream: [0.40, 0.916515]
+            self.assertEqual(speakers.identify(audio), "speaker_unknown")
+            self.assertEqual(speakers.last_decision["reason"], "awaiting_second_sample")
+            speakers.extractor.compute = lambda stream: [1.0, 0.0]
+            self.assertEqual(speakers.identify(audio), "speaker_01")
+            # A's turn must not erase pending enrollment of B.
+            speakers.extractor.compute = lambda stream: [0.40, 0.916515]
+            self.assertEqual(speakers.identify(audio), "speaker_02")
+            speakers.extractor.compute = lambda stream: [1.0, 0.0]
+            self.assertEqual(speakers.identify(audio), "speaker_01")
+            self.assertEqual(speakers.counter, 2)
+
+    def test_short_or_ambiguous_returning_A_does_not_create_speaker_03(self):
+        sherpa = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,
+            SpeakerEmbeddingExtractor=FakeExtractor,
+            SpeakerEmbeddingManager=FakeManager,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(
+            models, "require_model", return_value="fake.onnx",
+        ):
+            speakers = models.CamPlusRegistry("fake.onnx")
+            good = np.full(32000, 0.1, dtype=np.float32)
+            speakers.extractor.compute = lambda stream: [1.0, 0.0]
+            self.assertEqual(speakers.identify(good), "speaker_01")
+            speakers.extractor.compute = lambda stream: [0.0, 1.0]
+            self.assertEqual(speakers.identify(good), "speaker_02")
+            # A is briefly distorted, close to recognition threshold.
+            speakers.extractor.compute = lambda stream: [0.56, 0.3]
+            self.assertEqual(speakers.identify(good), "speaker_unknown")
+            self.assertEqual(speakers.last_decision["reason"], "near_existing_unknown")
+            speakers.extractor.compute = lambda stream: [1.0, 0.0]
+            self.assertEqual(speakers.identify(good), "speaker_01")
+            self.assertEqual(speakers.counter, 2)
 
     def test_short_noisy_or_clipped_voice_never_enrolls(self):
         sherpa = types.SimpleNamespace(

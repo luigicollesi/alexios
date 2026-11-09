@@ -88,6 +88,10 @@ class TurnEngine:
         self.silence_samples = 0
         self.last_check = 0
         self.turn_start = 0
+        # Sample-accurate bounds for the current utterance, independent of
+        # stale turn_parts: an old buffer must never enter a new ASR request.
+        self.first_voice_sample: int | None = None
+        self.last_voice_sample: int | None = None
         self.turn_parts: list[np.ndarray] = []
         self.turn_length = 0
         self.voice_parts: deque[np.ndarray] = deque()
@@ -131,19 +135,41 @@ class TurnEngine:
         return np.ascontiguousarray(np.concatenate(self.voice_parts), dtype=np.float32)
 
     def _finish(self, *, complete: bool, end_sample: int) -> CapturedTurn:
+        raw_audio = self._audio()
+        # The buffered frames are contiguous and end at 'clock'. Derive
+        # offsets from the audio itself, NOT from turn_start, which can be
+        # stale when a VAD backend holds a segment open too long.
+        raw_start = self.clock - len(raw_audio)
+        first = self.first_voice_sample
+        last = self.last_voice_sample
+        if first is not None and last is not None:
+            # Leave a little context around the actual voiced interval for
+            # Whisper; never include earlier turns or long leading silence.
+            desired_start = max(raw_start, first - self.preroll_samples)
+            desired_end = min(self.clock, last + self.min_pause)
+            left = max(0, desired_start - raw_start)
+            right = min(len(raw_audio), desired_end - raw_start)
+            audio = np.ascontiguousarray(raw_audio[left:right])
+            start_sample = desired_start
+        else:
+            audio = np.ascontiguousarray(raw_audio)
+            start_sample = raw_start
         turn = CapturedTurn(
             turn_id=str(uuid4()),
-            audio=self._audio(),
-            started_ms=self.turn_start * 1000 // SAMPLE_RATE,
+            audio=audio,
+            started_ms=start_sample * 1000 // SAMPLE_RATE,
             ended_ms=end_sample * 1000 // SAMPLE_RATE,
             complete=complete,
             activity_epoch=self.activity_epoch,
             speaker_audio=self._voice_audio(),
         )
+        # Drop *all* audio references as soon as a CapturedTurn is emitted.
         self.voice_parts.clear()
         self.voice_length = 0
         self.turn_parts.clear()
         self.turn_length = 0
+        self.first_voice_sample = None
+        self.last_voice_sample = None
         self.last_check = 0
         return turn
 
@@ -172,6 +198,9 @@ class TurnEngine:
                     self._append(part)
         self.voiced = speech
         if speech:
+            if self.first_voice_sample is None:
+                self.first_voice_sample = start
+            self.last_voice_sample = self.clock
             self.silence_samples = 0
             self.last_check = 0
             self._append_voice(samples)

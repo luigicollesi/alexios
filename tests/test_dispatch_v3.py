@@ -85,6 +85,38 @@ class DispatchTests(unittest.TestCase):
         finally:
             sender.shutdown()
 
+
+    def test_whisper_gets_full_turn_and_cam_plus_only_vad_voice(self):
+        client = FakeClient()
+        class SpyTranscriber:
+            seen = None
+            def transcribe(self, audio):
+                self.seen = audio.copy()
+                return "Alô, tudo bem?"
+        class SpySpeakers:
+            seen = None
+            def identify(self, audio):
+                self.seen = audio.copy()
+                return "speaker_unknown"
+        tx, speakers = SpyTranscriber(), SpySpeakers()
+        sender = EventDispatcher(client, tx, speakers, next_sequence=1)
+        try:
+            sender.speech_started(1)
+            self.assertTrue(wait_until(lambda: sender.acknowledged_activity >= 1))
+            full = np.concatenate((np.full(32000, 0.1, dtype=np.float32),
+                                   np.zeros(80000, dtype=np.float32)))
+            clean = full[:32000].copy()
+            sender.enqueue(CapturedTurn(
+                turn_id="turn-voice", audio=full, speaker_audio=clean,
+                started_ms=0, ended_ms=7000, complete=True, activity_epoch=1,
+            ))
+            self.assertTrue(wait_until(lambda: len(client.events) == 1))
+            self.assertEqual(len(tx.seen), len(full))
+            self.assertEqual(len(speakers.seen), len(clean))
+            self.assertEqual(client.events[0][1]["speakerId"], "speaker_unknown")
+        finally:
+            sender.shutdown()
+
     def test_empty_transcription_does_not_open_floor(self):
         client = FakeClient()
         class EmptyTranscriber:

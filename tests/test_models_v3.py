@@ -192,6 +192,30 @@ class ModelAdapterTests(unittest.TestCase):
             self.assertEqual(speakers.identify(good), "speaker_01")
             self.assertEqual(speakers.counter, 2)
 
+    def test_three_speakers_are_stable_regardless_of_turn_order(self):
+        """A, B, C, A, C, B, A must reuse existing IDs."""
+        sherpa = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,
+            SpeakerEmbeddingExtractor=FakeExtractor,
+            SpeakerEmbeddingManager=FakeManager,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(
+            models, "require_model", return_value="fake.onnx",
+        ):
+            speakers = models.CamPlusRegistry("fake.onnx")
+            audio = np.full(32000, 0.1, dtype=np.float32)
+            voices = {
+                "A": [1.0, 0.0],
+                "B": [0.0, 1.0],
+                "C": [-0.8, -0.6],
+            }
+            expected = {"A": "speaker_01", "B": "speaker_02", "C": "speaker_03"}
+            for who in ["A", "B", "C", "A", "C", "B", "A"]:
+                vector = voices[who]
+                speakers.extractor.compute = lambda stream, v=vector: v
+                self.assertEqual(speakers.identify(audio), expected[who])
+            self.assertEqual(speakers.counter, 3)
+
     def test_short_noisy_or_clipped_voice_never_enrolls(self):
         sherpa = types.SimpleNamespace(
             SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,

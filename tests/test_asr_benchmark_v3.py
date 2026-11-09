@@ -38,7 +38,7 @@ class AsrBenchmarkTests(unittest.TestCase):
 
     def test_empty_and_unicode_inputs(self):
         self.assertEqual(words("Família Mazzanti"), ["família", "mazzanti"])
-        self.assertEqual(edits("muita", "luigi"), 4)
+        self.assertEqual(edits("muita", "luigi"), 3)
         empty = summarize([], ("Luigi",))
         self.assertIsNone(empty["wer"])
         self.assertIsNone(empty["cer"])

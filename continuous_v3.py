@@ -7,6 +7,7 @@ Os endpoints /v3 só funcionarão após a implementação correspondente na web.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import signal
@@ -21,7 +22,7 @@ from agent.v3.bridge import EventBridge
 from agent.v3.capture import TurnAwareCapture
 from agent.v3.dispatch import EventDispatcher
 from agent.v3.models import CamPlusRegistry, SileroVad, SmartTurnDetector
-from agent.v3.transcription import WhisperTurnTranscriber
+from agent.v3.transcription import WhisperTurnTranscriber, load_vocabulary
 
 
 def stop_signal(_signum, _frame) -> None:
@@ -33,6 +34,16 @@ def main() -> int:
     parser.add_argument("--device", type=int, default=None, help="ID do microfone")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--model", default="tiny", help="Whisper local: tiny/base (Pi 4: tiny)")
+    parser.add_argument("--asr-context-mode", choices=("none", "hotwords", "prompt"),
+                        default="hotwords",
+                        help="Pistas de nomes/títulos; nunca substituição textual automática")
+    parser.add_argument("--asr-vocabulary", type=Path,
+                        default=Path(__file__).resolve().parent / "config" / "asr-vocabulary.json",
+                        help="JSON de grafias relevantes (apenas carregamento local)")
+    parser.add_argument("--asr-beam-size", type=int, default=5,
+                        help="Busca do Whisper: 1 a 8 (padrão 5)")
+    parser.add_argument("--asr-vad-filter", action="store_true",
+                        help="Ativa filtro Silero adicional dentro do Whisper")
     parser.add_argument("--model-dir", default="models/v3", help="Diretório dos pesos ONNX")
     parser.add_argument("--vad-threshold", type=float, default=0.5)
     parser.add_argument("--turn-threshold", type=float, default=0.5)
@@ -117,8 +128,25 @@ def main() -> int:
         # sem alterar os contratos da rede.
         stt_model = WhisperModel(args.model, device="cpu", compute_type="int8",
                                  cpu_threads=args.model_threads, num_workers=1)
-        transcriber = WhisperTurnTranscriber(stt_model)
-    except (ValueError, FileNotFoundError, OSError, RuntimeError, ImportError) as exc:
+        vocabulary = (load_vocabulary(args.asr_vocabulary)
+                      if args.asr_context_mode != "none" else ())
+        transcriber = WhisperTurnTranscriber(
+            stt_model,
+            vocabulary=vocabulary,
+            context_mode=args.asr_context_mode,
+            beam_size=args.asr_beam_size,
+            # V3 already has streaming Silero and strictly bounded turns.
+            # Avoid trimming short isolated words twice by default.
+            vad_filter=args.asr_vad_filter,
+        )
+        print(
+            f"[ASR] modelo={args.model} idioma=pt beam={args.asr_beam_size} "
+            f"contexto={args.asr_context_mode} termos={len(vocabulary)} "
+            f"vad_interno={'ligado' if args.asr_vad_filter else 'desligado'}",
+            flush=True,
+        )
+    except (ValueError, FileNotFoundError, OSError, RuntimeError,
+            ImportError, json.JSONDecodeError) as exc:
         print(f"Configuração V3 inválida: {exc}", file=sys.stderr)
         return 2
 

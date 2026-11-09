@@ -175,6 +175,27 @@ class ModelAdapterTests(unittest.TestCase):
             self.assertEqual(speakers.last_decision["reason"], "near_existing_unknown")
             self.assertEqual(speakers.counter, 1)
 
+    def test_multiple_reliable_references_reduce_same_person_fragmentation(self):
+        sherpa = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=FakeEmbeddingConfig,
+            SpeakerEmbeddingExtractor=FakeExtractor,
+            SpeakerEmbeddingManager=FakeManager,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": sherpa}), patch.object(models, "require_model", return_value="fake.onnx"):
+            speakers = models.CamPlusRegistry("fake.onnx")
+            samples = np.full(32000, 0.1, dtype=np.float32)
+            self.assertEqual(speakers.identify(samples), "speaker_01")
+            # Mesmo locutor numa segunda gravação ainda reconhecida pelo manager.
+            speakers.extractor.compute = lambda stream: [0.8, 0.6]
+            self.assertEqual(speakers.identify(samples), "speaker_01")
+            self.assertEqual(len(speakers.references["speaker_01"]), 2)
+            # A referência original não reconheceria esta terceira variação,
+            # mas a segunda amostra de referência é altamente semelhante.
+            speakers.extractor.compute = lambda stream: [0.3, 0.95394]
+            self.assertEqual(speakers.identify(samples), "speaker_01")
+            self.assertEqual(speakers.last_decision["reason"], "gallery_recovered")
+            self.assertEqual(speakers.counter, 1)
+
     def test_vad_uses_512_samples_and_reports_voice(self):
         sherpa = types.SimpleNamespace(
             VadModelConfig=FakeVadConfig,

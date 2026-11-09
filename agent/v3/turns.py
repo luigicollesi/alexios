@@ -35,6 +35,8 @@ class CapturedTurn:
     ended_ms: int
     complete: bool
     activity_epoch: int
+    # Somente amostras marcadas como fala pelo VAD; não muda o áudio do Whisper.
+    speaker_audio: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,9 @@ class TurnEngine:
         self.turn_start = 0
         self.turn_parts: list[np.ndarray] = []
         self.turn_length = 0
+        self.voice_parts: deque[np.ndarray] = deque()
+        self.voice_length = 0
+        self.max_voice_samples = 8 * SAMPLE_RATE
         self.preroll: deque[np.ndarray] = deque()
         self.preroll_length = 0
 
@@ -112,6 +117,19 @@ class TurnEngine:
     def _audio(self) -> np.ndarray:
         return np.concatenate(self.turn_parts).astype(np.float32, copy=False)
 
+    def _append_voice(self, frame: np.ndarray) -> None:
+        """Conserva os últimos oito segundos de fala efetiva sem o silêncio."""
+        self.voice_parts.append(frame.copy())
+        self.voice_length += len(frame)
+        while self.voice_parts and self.voice_length > self.max_voice_samples:
+            old = self.voice_parts.popleft()
+            self.voice_length -= len(old)
+
+    def _voice_audio(self) -> np.ndarray:
+        if not self.voice_parts:
+            return np.empty(0, dtype=np.float32)
+        return np.ascontiguousarray(np.concatenate(self.voice_parts), dtype=np.float32)
+
     def _finish(self, *, complete: bool, end_sample: int) -> CapturedTurn:
         turn = CapturedTurn(
             turn_id=str(uuid4()),
@@ -120,7 +138,10 @@ class TurnEngine:
             ended_ms=end_sample * 1000 // SAMPLE_RATE,
             complete=complete,
             activity_epoch=self.activity_epoch,
+            speaker_audio=self._voice_audio(),
         )
+        self.voice_parts.clear()
+        self.voice_length = 0
         self.turn_parts.clear()
         self.turn_length = 0
         self.last_check = 0
@@ -153,6 +174,7 @@ class TurnEngine:
         if speech:
             self.silence_samples = 0
             self.last_check = 0
+            self._append_voice(samples)
         else:
             self.silence_samples += len(samples)
         if self.turn_parts or speech:

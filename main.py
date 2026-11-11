@@ -37,14 +37,14 @@ def main() -> int:
     parser.add_argument("--asr-beam-size", type=int, default=5,
                         help="Busca do Whisper: 1 a 8 (padrão 5)")
     parser.add_argument("--model-dir", default="models/v3", help="Diretório dos pesos ONNX")
-    parser.add_argument("--vad-threshold", type=float, default=0.5)
-    parser.add_argument("--turn-threshold", type=float, default=0.5)
-    parser.add_argument("--speaker-threshold", type=float, default=0.6)
-    parser.add_argument("--speaker-min-voice-seconds", type=float, default=0.8)
-    parser.add_argument("--speaker-min-enroll-seconds", type=float, default=1.8)
-    parser.add_argument("--speaker-near-margin", type=float, default=0.07)
-    parser.add_argument("--speaker-distinct-max-similarity", type=float, default=0.20)
-    parser.add_argument("--model-threads", type=int, default=1)
+    parser.add_argument("--vad-threshold", type=float, default=0.5, help="Sensibilidade da detecção de voz")
+    parser.add_argument("--turn-threshold", type=float, default=0.5, help="Sensibilidade para encerrar um turno")
+    parser.add_argument("--speaker-threshold", type=float, default=0.6, help="Similaridade necessária para reconhecer uma voz")
+    parser.add_argument("--speaker-min-voice-seconds", type=float, default=0.8, help="Tempo mínimo de voz para tentar reconhecer alguém")
+    parser.add_argument("--speaker-min-enroll-seconds", type=float, default=1.8, help="Tempo mínimo para cadastrar a primeira voz ou uma referência de cadastro")
+    parser.add_argument("--speaker-near-margin", type=float, default=0.07, help="Margem de segurança para evitar identidades duplicadas")
+    parser.add_argument("--speaker-distinct-max-similarity", type=float, default=0.20, help="Limite para cadastrar rapidamente uma voz claramente diferente")
+    parser.add_argument("--model-threads", type=int, default=1, help="Quantidade de threads de CPU por modelo configurado")
     parser.add_argument("--debug-audio", action="store_true",
                         help="Mostra volume, VAD, decisões do Smart Turn e etapas HTTP/ASR")
     parser.add_argument("--mic-test", type=int, metavar="SEGUNDOS",

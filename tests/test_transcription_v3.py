@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from agent.v3.transcription import (
+from agent.transcription import (
     WhisperTurnTranscriber, load_vocabulary,
 )
 

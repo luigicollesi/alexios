@@ -35,13 +35,12 @@ Use `--device N` para selecionar um microfone e `--debug-audio` para diagnóstic
 - `main.py`: ponto único de entrada.
 - `agent/config.py`: configuração e validação de conexão.
 - `agent/runtime.py`: long-polling de presença e controle do microfone.
-- `agent/bridge.py`: transporte HTTP e comandos de presença.
 - `agent/capture.py`: captura de áudio e processamento fora do callback.
 - `agent/turns.py`: turnos e oportunidades de resposta.
 - `agent/models.py`: Silero VAD, Smart Turn e CAM++.
 - `agent/transcription.py`: faster-whisper e contexto de vocabulário.
 - `agent/dispatch.py`: fila serial, transcrição, identificação e envio de eventos.
-- `agent/event_bridge.py`: API de eventos do servidor.
+- `agent/bridge.py`: API de presença, estados e eventos do servidor.
 
 Os caminhos HTTP `/v2/agent/poll` e `/v2/agent/state` permanecem por compatibilidade do servidor; **não representam uma segunda versão do cliente**. Os eventos da conversa usam `/v3/agent/*`.
 

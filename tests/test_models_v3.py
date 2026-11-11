@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from agent.v3 import models
+from agent import models
 
 
 class FakeStream:

@@ -113,7 +113,6 @@ def main() -> int:
     parser.add_argument("--vocabulary", type=Path,
                         default=ROOT / "config" / "asr-vocabulary.json")
     parser.add_argument("--beam-size", type=int, default=5)
-    parser.add_argument("--vad-filter", action="store_true")
     parser.add_argument("--model-threads", type=int, default=1)
     args = parser.parse_args()
     if args.model_threads not in range(1, 5):
@@ -136,7 +135,7 @@ def main() -> int:
                          cpu_threads=args.model_threads, num_workers=1)
     transcriber = WhisperTurnTranscriber(
         model, vocabulary=vocabulary, context_mode=args.context_mode,
-        beam_size=args.beam_size, vad_filter=args.vad_filter,
+        beam_size=args.beam_size,
     )
     results: list[dict] = []
     for item in manifest:
@@ -153,7 +152,6 @@ def main() -> int:
         "model": args.model,
         "context_mode": args.context_mode,
         "beam_size": args.beam_size,
-        "vad_filter": args.vad_filter,
         "terms": len(vocabulary),
         **summarize(results, vocabulary),
     }, indent=2, ensure_ascii=False))

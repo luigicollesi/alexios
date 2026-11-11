@@ -1,4 +1,4 @@
-"""Controlador de presença / comando da API V2, independente do microfone."""
+"""Controla presença, comandos remotos e ciclo de vida do microfone."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ class CaptureDevice(Protocol):
 class AgentRuntime:
     def __init__(
         self, client: BridgeClient, capture: CaptureDevice, *,
-        mode_label: str = "Alexios V2",
-        capture_label: str = "janelas de 4s, deslocamento de 3s",
+        mode_label: str = "Alexios",
+        capture_label: str = "Silero + Smart Turn + CAM++ por turno",
     ) -> None:
         self.mode_label = mode_label
         self.capture_label = capture_label

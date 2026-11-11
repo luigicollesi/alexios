@@ -1,7 +1,7 @@
 """Pure metrics for the offline speaker benchmark."""
 import unittest
 
-from scripts.evaluate_speakers_v3 import summarize
+from scripts.evaluate_speakers import summarize
 
 
 class SpeakerEvaluationTests(unittest.TestCase):

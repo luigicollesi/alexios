@@ -12,7 +12,7 @@ cd alexios
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python scripts/download_v3_models.py
+python scripts/download_models.py
 cp .env.example .env
 ```
 

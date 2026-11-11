@@ -131,7 +131,7 @@ def main() -> int:
         )
         print(
             f"[ASR] modelo={args.model} idioma=pt beam={args.asr_beam_size} "
-            f"contexto={args.asr_context_mode} termos={len(vocabulary)}"
+            f"contexto={args.asr_context_mode} termos={len(vocabulary)}",
             flush=True,
         )
     except (ValueError, FileNotFoundError, OSError, RuntimeError,
@@ -161,7 +161,7 @@ def main() -> int:
     capture = TurnAwareCapture(
         dispatcher, vad, classifier, args.device, debug_audio=args.debug_audio,
     )
-    print(f"[V3] conexão aceita; próximo evento={next_sequence}", flush=True)
+    print(f"[ALEXIOS] conexão aceita; próximo evento={next_sequence}", flush=True)
     signal.signal(signal.SIGTERM, stop_signal)
     try:
         AgentRuntime(
@@ -170,7 +170,7 @@ def main() -> int:
             capture_label="Silero + Smart Turn + CAM++ por turno",
         ).run()
     except BridgeError as exc:
-        print(f"Falha de conexão do Agent V3: {exc}", file=sys.stderr)
+        print(f"Falha de conexão do Alexios: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         capture.shutdown()

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from agent.config import AgentConfig
-from agent.v3.bridge import EventBridge
+from agent.event_bridge import EventBridge
 from agent.bridge import BridgeError
 
 

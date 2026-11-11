@@ -2,3 +2,6 @@ faster-whisper>=1.1,<2
 numpy>=1.26,<3
 sounddevice>=0.5,<1
 python-dotenv>=1,<2
+onnxruntime>=1.19,<2
+sherpa-onnx>=1.12,<2
+transformers>=4.46,<5

@@ -1,6 +1,6 @@
 """Adaptadores reais para modelos open-source executados em CPU.
 
-Importações opcionais ocorrem apenas durante inicialização da V3. Os pesos
+Importações de modelos ocorrem durante a inicialização do cliente. Os pesos
 nunca são obtidos silenciosamente da rede durante captura.
 """
 

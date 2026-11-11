@@ -10,10 +10,9 @@ import sys
 
 from dotenv import load_dotenv
 
-from agent.bridge import BridgeError
+from agent.bridge import BridgeError, EventBridge
 from agent.config import AgentConfig
 from agent.runtime import AgentRuntime
-from agent.event_bridge import EventBridge
 from agent.capture import TurnAwareCapture
 from agent.dispatch import EventDispatcher
 from agent.models import CamPlusRegistry, SileroVad, SmartTurnDetector

@@ -13,7 +13,6 @@ import time
 from typing import Any
 
 import numpy as np
-import sounddevice as sd
 
 from .dispatch import EventDispatcher
 from .models import SileroVad
@@ -183,6 +182,7 @@ class TurnAwareCapture:
 
     def _record_loop(self) -> None:
         try:
+            import sounddevice as sd
             with sd.InputStream(
                 samplerate=16_000,
                 channels=1,

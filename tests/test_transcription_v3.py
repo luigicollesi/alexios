@@ -46,14 +46,13 @@ class TranscriptionV3Tests(unittest.TestCase):
         model = FakeWhisper("Luigi")
         stt = WhisperTurnTranscriber(
             model, vocabulary=("Luigi",), context_mode="prompt", beam_size=3,
-            vad_filter=True,
         )
         self.assertEqual(stt.transcribe(self.sample()), "Luigi")
         _, options = model.calls[0]
         self.assertEqual(options["initial_prompt"], "Luigi")
         self.assertNotIn("hotwords", options)
         self.assertEqual(options["beam_size"], 3)
-        self.assertTrue(options["vad_filter"])
+        self.assertFalse(options["vad_filter"])
 
     def test_none_mode_has_no_bias(self):
         model = FakeWhisper("muita")

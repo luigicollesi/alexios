@@ -164,11 +164,7 @@ def main() -> int:
     print(f"[ALEXIOS] conexão aceita; próximo evento={next_sequence}", flush=True)
     signal.signal(signal.SIGTERM, stop_signal)
     try:
-        AgentRuntime(
-            client, capture,
-            mode_label="Alexios",
-            capture_label="Silero + Smart Turn + CAM++ por turno",
-        ).run()
+        AgentRuntime(client, capture).run()
     except BridgeError as exc:
         print(f"Falha de conexão do Alexios: {exc}", file=sys.stderr)
         return 1

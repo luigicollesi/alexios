@@ -1,176 +1,189 @@
-"""Alexios: microfone -> transcrição local -> OpenRouter -> resposta em texto."""
+"""Cliente oficial Alexios: captura local, turnos e comunicação com a Web."""
+
+from __future__ import annotations
 
 import argparse
-import queue
-import sys
-import urllib.error
-import urllib.request
 import json
 import os
 from pathlib import Path
+import signal
+import sys
 
-import numpy as np
-import sounddevice as sd
 from dotenv import load_dotenv
-from faster_whisper import WhisperModel
 
-from context import BASE_CONTEXT
-
-
-SAMPLE_RATE = 16000
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
-MAX_HISTORY_MESSAGES = 12
-
-
-def record_audio(device: int | None, max_seconds: int = 60) -> np.ndarray:
-    """Grava áudio mono enquanto o usuário não pressiona Enter."""
-    chunks: queue.Queue[np.ndarray] = queue.Queue()
-    errors: list[str] = []
-
-    def callback(indata, frames, time_info, status):
-        if status:
-            errors.append(str(status))
-        chunks.put(indata.copy())
-
-    input("Pressione Enter para INICIAR a gravação...")
-    print("Gravando. Fale agora e pressione Enter para PARAR.")
-
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-        device=device,
-        callback=callback,
-    ):
-        input()
-
-    if errors:
-        print(f"Aviso do microfone: {errors[-1]}", file=sys.stderr)
-
-    recorded = []
-    while not chunks.empty():
-        recorded.append(chunks.get_nowait())
-
-    if not recorded:
-        return np.empty(0, dtype=np.float32)
-
-    audio = np.concatenate(recorded, axis=0).reshape(-1)
-    if audio.size > max_seconds * SAMPLE_RATE:
-        print(f"Áudio limitado aos primeiros {max_seconds} segundos.")
-        audio = audio[: max_seconds * SAMPLE_RATE]
-    return audio
+from agent.bridge import BridgeError
+from agent.config import AgentConfig
+from agent.runtime import AgentRuntime
+from agent.v3.bridge import EventBridge
+from agent.v3.capture import TurnAwareCapture
+from agent.v3.dispatch import EventDispatcher
+from agent.v3.models import CamPlusRegistry, SileroVad, SmartTurnDetector
+from agent.v3.transcription import WhisperTurnTranscriber, load_vocabulary
 
 
-def transcribe_audio(model: WhisperModel, audio: np.ndarray) -> str:
-    """Transcreve a fala localmente para português."""
-    segments, _ = model.transcribe(
-        audio, language="pt", beam_size=5, vad_filter=True
-    )
-    return " ".join(
-        segment.text.strip() for segment in segments if segment.text.strip()
-    )
+def stop_signal(_signum, _frame) -> None:
+    raise KeyboardInterrupt
 
 
-def ask_openrouter(api_key: str, messages: list[dict[str, str]]) -> str:
-    """Envia somente texto ao modelo e retorna o texto da resposta."""
-    payload = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "system", "content": BASE_CONTEXT}, *messages],
-        "max_tokens": 800,
-        "stream": False,
-    }).encode("utf-8")
-
-    request = urllib.request.Request(
-        OPENROUTER_URL,
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            result = json.load(response)
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")[:600]
-        raise RuntimeError(f"OpenRouter HTTP {exc.code}: {details}") from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Falha de conexão com OpenRouter: {exc}") from exc
-
-    try:
-        content = result["choices"][0]["message"]["content"]
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("O modelo não retornou texto (resposta vazia).")
-        return content.strip()
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise RuntimeError(f"Resposta inesperada da API: {exc}") from exc
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Assistente Alexios: microfone, Whisper e OpenRouter"
-    )
-    parser.add_argument("--list-devices", action="store_true", help="Lista microfones disponíveis")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Alexios: cliente local de voz por turnos")
     parser.add_argument("--device", type=int, default=None, help="ID do microfone")
-    parser.add_argument("--model", default="base", help="Modelo Whisper (tiny, base, small)")
+    parser.add_argument("--list-devices", action="store_true")
+    parser.add_argument("--model", default="tiny", help="Modelo Whisper local (tiny, base, small, medium etc.)")
+    parser.add_argument("--asr-context-mode", choices=("none", "hotwords", "prompt"),
+                        default="hotwords",
+                        help="Pistas de nomes/títulos; nunca substituição textual automática")
+    parser.add_argument("--asr-vocabulary", type=Path,
+                        default=Path(__file__).resolve().parent / "config" / "asr-vocabulary.json",
+                        help="JSON de grafias relevantes (apenas carregamento local)")
+    parser.add_argument("--asr-beam-size", type=int, default=5,
+                        help="Busca do Whisper: 1 a 8 (padrão 5)")
+    parser.add_argument("--asr-vad-filter", action="store_true",
+                        help="Ativa filtro Silero adicional dentro do Whisper")
+    parser.add_argument("--model-dir", default="models/v3", help="Diretório dos pesos ONNX")
+    parser.add_argument("--vad-threshold", type=float, default=0.5)
+    parser.add_argument("--turn-threshold", type=float, default=0.5)
+    parser.add_argument("--speaker-threshold", type=float, default=0.6)
+    parser.add_argument("--speaker-min-voice-seconds", type=float, default=0.8)
+    parser.add_argument("--speaker-min-enroll-seconds", type=float, default=1.8)
+    parser.add_argument("--speaker-near-margin", type=float, default=0.07)
+    parser.add_argument("--speaker-distinct-max-similarity", type=float, default=0.20)
+    parser.add_argument("--model-threads", type=int, default=1)
+    parser.add_argument("--debug-audio", action="store_true",
+                        help="Mostra volume, VAD, decisões do Smart Turn e etapas HTTP/ASR")
+    parser.add_argument("--mic-test", type=int, metavar="SEGUNDOS",
+                        help="Testa nível do microfone sem carregar modelos ou conectar à web")
     args = parser.parse_args()
+
+    import sounddevice as sd
 
     if args.list_devices:
         print(sd.query_devices())
-        return
+        return 0
 
-    load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        print("OPENROUTER_API_KEY não encontrada. Crie o arquivo .env na raiz.", file=sys.stderr)
-        raise SystemExit(1)
+    if args.mic_test is not None:
+        import numpy as np
+        if not 1 <= args.mic_test <= 30:
+            parser.error("--mic-test aceita de 1 a 30 segundos.")
+        try:
+            info = sd.query_devices(args.device, "input")
+            print(f"[MIC] dispositivo: {info['name']}", flush=True)
+            sd.check_input_settings(
+                device=args.device, samplerate=16_000, channels=1,
+                dtype="float32",
+            )
+            print(f"[MIC] gravando {args.mic_test}s sem enviar áudio à web...", flush=True)
+            recorded = sd.rec(
+                args.mic_test * 16_000, samplerate=16_000, channels=1,
+                dtype="float32", device=args.device, blocking=True,
+            ).reshape(-1)
+            for second in range(args.mic_test):
+                block = recorded[second * 16_000:(second + 1) * 16_000]
+                rms = float(np.sqrt(np.mean(block * block)))
+                peak = float(np.max(np.abs(block)))
+                print(f"[MIC] segundo={second+1} rms={rms:.5f} pico={peak:.5f}",
+                      flush=True)
+            if float(np.max(np.abs(recorded))) < 0.003:
+                print("[MIC] sinal muito baixo! Use --list-devices e informe --device.",
+                      flush=True)
+            return 0
+        except Exception as exc:
+            print(f"[MIC] erro de captura: {exc}", file=sys.stderr)
+            return 2
 
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     try:
-        info = sd.query_devices(args.device, "input")
+        config = AgentConfig.from_env()
+        if args.model_threads < 1 or args.model_threads > 4:
+            raise ValueError("--model-threads deve estar entre 1 e 4.")
         sd.check_input_settings(
-            device=args.device, samplerate=SAMPLE_RATE, channels=1, dtype="float32"
+            device=args.device, samplerate=16_000, channels=1, dtype="float32"
         )
-        print(f"Microfone: {info['name']}")
-        print(f"Carregando modelo Whisper '{args.model}' na CPU...")
-        model = WhisperModel(args.model, device="cpu", compute_type="int8")
-        history: list[dict[str, str]] = []
+        mic = sd.query_devices(args.device, "input")
+        print(f"[MIC] entrada selecionada: {mic['name']} "
+              f"({'padrão do sistema' if args.device is None else args.device})",
+              flush=True)
+        base = Path(args.model_dir)
+        from faster_whisper import WhisperModel
 
-        while True:
-            audio = record_audio(args.device)
-            if audio.size == 0 or np.max(np.abs(audio)) < 0.001:
-                print("Nenhuma fala detectada. Tente novamente.")
-            else:
-                print("Transcrevendo...")
-                transcription = transcribe_audio(model, audio)
-                if not transcription:
-                    print("Nenhuma fala reconhecida.")
-                else:
-                    print(f"Você: {transcription}")
-                    print("Consultando a IA...")
-                    candidate = [*history, {"role": "user", "content": transcription}]
-                    try:
-                        answer = ask_openrouter(api_key, candidate)
-                    except RuntimeError as exc:
-                        print(f"Erro ao consultar a IA: {exc}", file=sys.stderr)
-                    else:
-                        print(f"Alexios: {answer}\n")
-                        history = [
-                            *candidate, {"role": "assistant", "content": answer}
-                        ][-MAX_HISTORY_MESSAGES:]
+        print("Carregando Silero VAD, Smart Turn, CAM++ e Whisper (CPU)...")
+        vad = SileroVad(str(base / "silero_vad.onnx"), threshold=args.vad_threshold)
+        classifier = SmartTurnDetector(
+            str(base / "smart-turn-v3.2-cpu.onnx"),
+            threshold=args.turn_threshold, threads=args.model_threads,
+        )
+        speakers = CamPlusRegistry(
+            str(base / "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"),
+            threshold=args.speaker_threshold, threads=args.model_threads,
+            min_voice_seconds=args.speaker_min_voice_seconds,
+            min_enroll_seconds=args.speaker_min_enroll_seconds,
+            near_match_margin=args.speaker_near_margin,
+            distinct_voice_max_similarity=args.speaker_distinct_max_similarity,
+        )
+        # Prioridade para menor carga no Pi 4. O modelo STT pode ser trocado
+        # sem alterar os contratos da rede.
+        stt_model = WhisperModel(args.model, device="cpu", compute_type="int8",
+                                 cpu_threads=args.model_threads, num_workers=1)
+        vocabulary = (load_vocabulary(args.asr_vocabulary)
+                      if args.asr_context_mode != "none" else ())
+        transcriber = WhisperTurnTranscriber(
+            stt_model,
+            vocabulary=vocabulary,
+            context_mode=args.asr_context_mode,
+            beam_size=args.asr_beam_size,
+            # V3 already has streaming Silero and strictly bounded turns.
+            # Avoid trimming short isolated words twice by default.
+            vad_filter=args.asr_vad_filter,
+        )
+        print(
+            f"[ASR] modelo={args.model} idioma=pt beam={args.asr_beam_size} "
+            f"contexto={args.asr_context_mode} termos={len(vocabulary)} "
+            f"vad_interno={'ligado' if args.asr_vad_filter else 'desligado'}",
+            flush=True,
+        )
+    except (ValueError, FileNotFoundError, OSError, RuntimeError,
+            ImportError, json.JSONDecodeError) as exc:
+        print(f"Configuração do Alexios inválida: {exc}", file=sys.stderr)
+        return 2
 
-            if input("Nova gravação? [Enter = sim / n = sair]: ").strip().lower() in {
-                "n", "não", "nao"
-            }:
-                break
-    except (sd.PortAudioError, ValueError) as exc:
-        print(f"Erro ao acessar o microfone: {exc}", file=sys.stderr)
-        print("Use 'python main.py --list-devices' para selecionar outro dispositivo.")
-        raise SystemExit(1) from exc
+    client = EventBridge(config)
+    try:
+        # /v2/agent/poll registra a lease de presença; sync inicializa
+        # a sequência V3 a partir da posição persistida no Neon.
+        client.poll(-1)
+        next_sequence = client.sync()
+    except BridgeError as exc:
+        print(f"Servidor não oferece o protocolo V3: {exc}. "
+              "Verifique a configuração e os endpoints do servidor.",
+              file=sys.stderr)
+        return 1
+
+    capture: TurnAwareCapture | None = None
+    dispatcher = EventDispatcher(
+        client, transcriber, speakers,
+        next_sequence=next_sequence,
+        enabled=lambda: capture is not None and capture.running,
+        debug_audio=args.debug_audio,
+    )
+    capture = TurnAwareCapture(
+        dispatcher, vad, classifier, args.device, debug_audio=args.debug_audio,
+    )
+    print(f"[V3] conexão aceita; próximo evento={next_sequence}", flush=True)
+    signal.signal(signal.SIGTERM, stop_signal)
+    try:
+        AgentRuntime(
+            client, capture,
+            mode_label="Alexios",
+            capture_label="Silero + Smart Turn + CAM++ por turno",
+        ).run()
+    except BridgeError as exc:
+        print(f"Falha de conexão do Agent V3: {exc}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
-        print("\nEncerrando.")
+        capture.shutdown()
+        print("\nEncerrado por sinal.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

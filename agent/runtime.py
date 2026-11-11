@@ -25,11 +25,7 @@ class CaptureDevice(Protocol):
 class AgentRuntime:
     def __init__(
         self, client: BridgeClient, capture: CaptureDevice, *,
-        mode_label: str = "Alexios",
-        capture_label: str = "Silero + Smart Turn + CAM++ por turno",
     ) -> None:
-        self.mode_label = mode_label
-        self.capture_label = capture_label
         self.client = client
         self.capture = capture
         self.command_seq = -1
@@ -69,7 +65,7 @@ class AgentRuntime:
         if self.capture.start():
             try:
                 if self._report("running"):
-                    print(f"ESCUTA ATIVA: {self.capture_label}.")
+                    print(f"ESCUTA ATIVA: Silero + Smart Turn + CAM++ por turno.")
                     return
             except BridgeError:
                 self.capture.stop()
@@ -83,7 +79,7 @@ class AgentRuntime:
         print(f"Não foi possível iniciar o microfone: {error}", file=sys.stderr)
 
     def run(self) -> None:
-        print(f"{self.mode_label}: presença e comandos via long polling; IA exclusiva na web.")
+        print(f"Alexios: presença e comandos via long polling; IA exclusiva na web.")
         try:
             while True:
                 try:

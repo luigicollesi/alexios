@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import signal
 import sys
@@ -14,11 +13,11 @@ from dotenv import load_dotenv
 from agent.bridge import BridgeError
 from agent.config import AgentConfig
 from agent.runtime import AgentRuntime
-from agent.v3.bridge import EventBridge
-from agent.v3.capture import TurnAwareCapture
-from agent.v3.dispatch import EventDispatcher
-from agent.v3.models import CamPlusRegistry, SileroVad, SmartTurnDetector
-from agent.v3.transcription import WhisperTurnTranscriber, load_vocabulary
+from agent.event_bridge import EventBridge
+from agent.capture import TurnAwareCapture
+from agent.dispatch import EventDispatcher
+from agent.models import CamPlusRegistry, SileroVad, SmartTurnDetector
+from agent.transcription import WhisperTurnTranscriber, load_vocabulary
 
 
 def stop_signal(_signum, _frame) -> None:
@@ -38,8 +37,6 @@ def main() -> int:
                         help="JSON de grafias relevantes (apenas carregamento local)")
     parser.add_argument("--asr-beam-size", type=int, default=5,
                         help="Busca do Whisper: 1 a 8 (padrão 5)")
-    parser.add_argument("--asr-vad-filter", action="store_true",
-                        help="Ativa filtro Silero adicional dentro do Whisper")
     parser.add_argument("--model-dir", default="models/v3", help="Diretório dos pesos ONNX")
     parser.add_argument("--vad-threshold", type=float, default=0.5)
     parser.add_argument("--turn-threshold", type=float, default=0.5)
@@ -131,14 +128,10 @@ def main() -> int:
             vocabulary=vocabulary,
             context_mode=args.asr_context_mode,
             beam_size=args.asr_beam_size,
-            # V3 already has streaming Silero and strictly bounded turns.
-            # Avoid trimming short isolated words twice by default.
-            vad_filter=args.asr_vad_filter,
         )
         print(
             f"[ASR] modelo={args.model} idioma=pt beam={args.asr_beam_size} "
-            f"contexto={args.asr_context_mode} termos={len(vocabulary)} "
-            f"vad_interno={'ligado' if args.asr_vad_filter else 'desligado'}",
+            f"contexto={args.asr_context_mode} termos={len(vocabulary)}"
             flush=True,
         )
     except (ValueError, FileNotFoundError, OSError, RuntimeError,

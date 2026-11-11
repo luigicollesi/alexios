@@ -1,5 +1,0 @@
-# Instale requisitos V2 mais ferramentas ONNX para a V3 em Python 3.12 ARM64.
--r requirements.txt
-onnxruntime>=1.19,<2
-sherpa-onnx>=1.12,<2
-transformers>=4.46,<5

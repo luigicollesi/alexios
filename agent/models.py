@@ -15,7 +15,7 @@ SAMPLE_RATE = 16000
 def require_model(path: str | Path) -> str:
     target = Path(path).expanduser().resolve()
     if not target.is_file() or target.stat().st_size < 1024:
-        raise FileNotFoundError(f"Modelo ONNX ausente/inválido: {target}. Execute python scripts/download_v3_models.py.")
+        raise FileNotFoundError(f"Modelo ONNX ausente/inválido: {target}. Execute python scripts/download_models.py.")
     return str(target)
 
 

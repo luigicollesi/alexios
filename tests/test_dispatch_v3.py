@@ -5,8 +5,8 @@ import unittest
 
 import numpy as np
 
-from agent.v3.dispatch import EventDispatcher
-from agent.v3.turns import CapturedTurn, FloorOpened
+from agent.dispatch import EventDispatcher
+from agent.turns import CapturedTurn, FloorOpened
 
 
 class FakeClient:

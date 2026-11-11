@@ -52,7 +52,6 @@ class WhisperTurnTranscriber:
     def __init__(
         self, model: object, *, vocabulary: Sequence[str] = (),
         context_mode: str = "hotwords", beam_size: int = 5,
-        vad_filter: bool = False,
     ) -> None:
         if context_mode not in {"none", "hotwords", "prompt"}:
             raise ValueError("Modo de contexto ASR inválido.")
@@ -61,7 +60,6 @@ class WhisperTurnTranscriber:
         self.model = model
         self.context_mode = context_mode
         self.beam_size = beam_size
-        self.vad_filter = vad_filter
         self.vocabulary = tuple(vocabulary)
         if len(self.vocabulary) > MAX_TERMS or len(", ".join(self.vocabulary)) > MAX_CONTEXT_CHARS:
             raise ValueError("Vocabulário ASR muito extenso.")
@@ -75,7 +73,7 @@ class WhisperTurnTranscriber:
         options = dict(
             language="pt",
             beam_size=self.beam_size,
-            vad_filter=self.vad_filter,
+            vad_filter=False,
             condition_on_previous_text=False,
         )
         if self.vocabulary and self.context_mode != "none":

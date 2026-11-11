@@ -1,8 +1,4 @@
-"""Transporte de eventos V3. Reutiliza o canal de presença e comandos V2.
-
-O servidor V3 ainda deve implementar /v3/agent/sync|turn|chunk|floor|activity
-antes da integração real. Nenhuma chamada à API de IA é feita localmente.
-"""
+"""Eventos de conversa aceitos pela API atual do Alexios Web."""
 
 from __future__ import annotations
 

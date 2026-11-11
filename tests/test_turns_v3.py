@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from agent.v3.turns import (
+from agent.turns import (
     SAMPLE_RATE, CapturedTurn, FloorOpened, SpeechStarted, TurnEngine,
 )
 

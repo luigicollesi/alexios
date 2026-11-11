@@ -24,7 +24,7 @@ class CaptureDevice(Protocol):
 
 class AgentRuntime:
     def __init__(
-        self, client: BridgeClient, capture: CaptureDevice, *,
+        self, client: BridgeClient, capture: CaptureDevice,
     ) -> None:
         self.client = client
         self.capture = capture

@@ -1,6 +1,7 @@
-"""Contrato HTTP exclusivo com /v2 do Alexios Web.
+"""Comunicação HTTP compartilhada: presença e comandos de captura.
 
-O long polling carrega somente presença e comandos, nunca falas ou IA.
+O servidor mantém os endpoints /v2/agent/poll e /v2/agent/state
+por compatibilidade de protocolo. A conversação utiliza /v3/agent/*.
 """
 
 from __future__ import annotations
@@ -96,14 +97,3 @@ class BridgeClient:
             timeout=timeout,
         )
 
-    def upload(self, capture_id: str, index: int, words: list[dict]) -> int:
-        response = self._request("/v2/transcript", {
-            **self._identity(),
-            "captureId": capture_id,
-            "windowIndex": index,
-            "words": words,
-        })
-        accepted = response.get("acceptedWords")
-        if type(accepted) is not int or accepted < 0:
-            raise BridgeError("Resposta inválida do envio de transcrição V2.")
-        return accepted

@@ -1,7 +1,7 @@
 """Unidade: métricas offline ASR, sem modelos ou WAVs de pessoas reais."""
 import unittest
 
-from scripts.benchmark_asr_v3 import edits, phrase_count, summarize, words
+from scripts.benchmark_asr import edits, phrase_count, summarize, words
 
 
 class AsrBenchmarkTests(unittest.TestCase):

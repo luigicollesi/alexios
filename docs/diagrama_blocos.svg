@@ -6,7 +6,6 @@
 </defs>
 <rect width="1200" height="440" fill="#fff"/>
 <text x="600" y="56" text-anchor="middle" fill="#1e293b" font-family="Arial,Helvetica,sans-serif" font-size="30" font-weight="700">Alexios — Diagrama de Blocos</text>
-<text x="600" y="87" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="18">Conexões físicas do Raspberry Pi 4</text>
 <rect x="44" y="164" width="278" height="128" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="2.5"/>
 <rect x="457" y="151" width="286" height="154" rx="14" fill="#fff1f2" stroke="#c33548" stroke-width="3"/>
 <rect x="878" y="164" width="278" height="128" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="2.5"/>
@@ -22,5 +21,4 @@
 <text x="388" y="201" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="14">USB-C</text>
 <text x="810" y="180" text-anchor="middle" fill="#334155" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700">Áudio</text>
 <text x="810" y="201" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="14">USB</text>
-<text x="600" y="378" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="16">Somente componentes físicos e suas conexões</text>
 </svg>

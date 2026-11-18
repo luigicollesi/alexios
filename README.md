@@ -128,9 +128,9 @@ python -m compileall -q main.py agent scripts tests
 
 **[Assistir ao vídeo de demonstração do Alexios](docs/teste_25MB.mp4)**
 
-O vídeo, disponível em `docs/teste_25MB.mp4`, registra o sistema em funcionamento, mostrando a interface web, o avatar e as respostas da conversa. A gravação possui aproximadamente 2 minutos e 39 segundos e foi comprimida para facilitar a disponibilização no repositório.
+O vídeo, disponível em `docs/teste_25MB.mp4`, demonstra o Alexios em funcionamento **em um computador com maior capacidade de processamento que o Raspberry Pi 4**, mostrando a interface web, o avatar e as respostas da conversa. A gravação possui aproximadamente 2 minutos e 39 segundos e foi comprimida para facilitar sua disponibilização no repositório.
 
-A gravação demonstra a utilização do sistema, mas, isoladamente, não comprova que o processamento foi executado no Raspberry Pi 4. O diagrama representa a montagem física prevista.
+O projeto também foi testado no **Raspberry Pi 4**, conforme a montagem física apresentada no diagrama de blocos. Entretanto, o dispositivo **não apresentou capacidade de processamento suficiente para executar o cliente Python de forma satisfatória**. Dessa forma, o vídeo comprova o funcionamento do sistema no computador mais potente, mas não representa uma execução bem-sucedida no Raspberry Pi 4.
 
 ---
 

@@ -110,6 +110,7 @@ O cliente consulta `/v2/agent/poll` e informa seu estado em `/v2/agent/state`. P
 | **`tests/`** | Testes automatizados dos componentes e contratos |
 | **`docs/architecture.md`** | Arquitetura lógica e responsabilidades do cliente |
 | **`docs/diagrama_blocos.svg`** | Diagrama de blocos da montagem física |
+| **`docs/teste_25MB.mp4`** | Vídeo de demonstração do sistema em funcionamento |
 | **`.env.example`** | Modelo das variáveis de ambiente |
 | **`requirements.txt`** | Dependências Python |
 | **`README.md`** | Documentação principal do projeto |
@@ -125,7 +126,9 @@ python -m unittest discover -s tests -v
 python -m compileall -q main.py agent scripts tests
 ```
 
-Também foi produzido um **registro audiovisual de demonstração do Alexios em funcionamento**, com a interface web, o avatar e as respostas da conversa. O vídeo original da demonstração é `IMG_9476.mp4` (aproximadamente 2 minutos e 39 segundos). **O MP4 não está versionado neste repositório**; esta descrição não substitui o arquivo audiovisual.
+**[Assistir ao vídeo de demonstração do Alexios](docs/teste_25MB.mp4)**
+
+O vídeo, disponível em `docs/teste_25MB.mp4`, registra o sistema em funcionamento, mostrando a interface web, o avatar e as respostas da conversa. A gravação possui aproximadamente 2 minutos e 39 segundos e foi comprimida para facilitar a disponibilização no repositório.
 
 A gravação demonstra a utilização do sistema, mas, isoladamente, não comprova que o processamento foi executado no Raspberry Pi 4. O diagrama representa a montagem física prevista.
 

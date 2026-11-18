@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+<title id="title">Diagrama de blocos — Alexios Python no Raspberry Pi 4</title>
+<desc id="desc">Tomada elétrica fornece energia ao Raspberry Pi 4 por fonte USB-C apropriada. Microfone USB conecta-se ao Raspberry Pi 4 por uma porta USB.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#c33548"/></marker>
+</defs>
+<rect width="1200" height="440" fill="#fff"/>
+<text x="600" y="56" text-anchor="middle" fill="#1e293b" font-family="Arial,Helvetica,sans-serif" font-size="30" font-weight="700">Alexios — Diagrama de Blocos</text>
+<text x="600" y="87" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="18">Conexões físicas do Raspberry Pi 4</text>
+<rect x="44" y="164" width="278" height="128" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="2.5"/>
+<rect x="457" y="151" width="286" height="154" rx="14" fill="#fff1f2" stroke="#c33548" stroke-width="3"/>
+<rect x="878" y="164" width="278" height="128" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="2.5"/>
+<text x="183" y="219" text-anchor="middle" fill="#1e293b" font-family="Arial,Helvetica,sans-serif" font-size="24" font-weight="700">Tomada elétrica</text>
+<text x="183" y="250" text-anchor="middle" fill="#475569" font-family="Arial,Helvetica,sans-serif" font-size="17">Fonte de alimentação</text>
+<text x="600" y="217" text-anchor="middle" fill="#9f1239" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700">Raspberry Pi 4</text>
+<text x="600" y="250" text-anchor="middle" fill="#475569" font-family="Arial,Helvetica,sans-serif" font-size="18">Alexios Python</text>
+<text x="1017" y="219" text-anchor="middle" fill="#1e293b" font-family="Arial,Helvetica,sans-serif" font-size="24" font-weight="700">Microfone USB</text>
+<text x="1017" y="250" text-anchor="middle" fill="#475569" font-family="Arial,Helvetica,sans-serif" font-size="17">Entrada de áudio</text>
+<line x1="322" y1="229" x2="455" y2="229" stroke="#c33548" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="878" y1="229" x2="745" y2="229" stroke="#c33548" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="388" y="180" text-anchor="middle" fill="#334155" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700">Alimentação</text>
+<text x="388" y="201" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="14">USB-C</text>
+<text x="810" y="180" text-anchor="middle" fill="#334155" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700">Áudio</text>
+<text x="810" y="201" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="14">USB</text>
+<text x="600" y="378" text-anchor="middle" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="16">Somente componentes físicos e suas conexões</text>
+</svg>
